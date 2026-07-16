@@ -8,11 +8,14 @@ La aplicación prioriza la privacidad absoluta almacenando todos tus datos en lo
 
 ## 📸 Capturas de la Aplicación
 
-Para documentar visualmente el proyecto, te sugerimos realizar las siguientes **3 capturas de pantalla** de la aplicación, nombrarlas exactamente así y guardarlas en la carpeta `public/screenshots/` (crea la carpeta `screenshots` dentro de `public` si no existe):
+### 1. Panel de Inicio (Dashboard) e Historial Completo
+![Dashboard](public/screenshots/dashboard.png)
 
-1. **`dashboard.png`**: Captura de la pantalla principal (Inicio) donde se visualizan las tarjetas de estadísticas dinámicas y el **Historial Completo de Conversiones** con sus estados de éxito/fallo y acciones.
-2. **`import_queue.png`**: Captura de la pantalla "Nuevo Documento" donde se muestra la zona de arrastre (drag-and-drop) y la **cola de procesamiento por lotes** secuencial en segundo plano.
-3. **`workspace.png`**: Captura del espacio de trabajo con el visor de PDF/imagen original a la izquierda y el editor de código Markdown a la derecha, o bien de la **caja flotante premium de previsualización de código** con efecto vidrio e iluminación azul.
+### 2. Carga y Cola de Procesamiento por Lotes
+![Carga por lotes](public/screenshots/import_queue.png)
+
+### 3. Editor de Workspace y Previsualización de Código
+![Espacio de Trabajo](public/screenshots/workspace.png)
 
 ---
 
