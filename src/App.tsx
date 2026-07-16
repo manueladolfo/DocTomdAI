@@ -45,15 +45,17 @@ interface QueueItem {
   errorMsg?: string;
 }
 
-// Icono oficial de Google Drive
-const GoogleDriveIcon = ({ size = 18 }: { size?: number }) => (
-  <svg width={size} height={size} viewBox="0 0 24 24" className="shrink-0">
-    <path d="M15.445 15.1l3.505-6.09h-3.505z" fill="#4285F4"></path>
-    <path d="M10.315 15.45l3.505 6.09h-3.505z" fill="#34A853"></path>
-    <path d="M6.81 15.1l3.505-6.09H3.305z" fill="#FBBC04"></path>
-    <path d="M10.315 9.36L6.81 15.45l3.505 6.09 3.505-6.09z" fill="#1967D2"></path>
-    <path d="M15.445 9.01L10.315 0h6.81l5.105 9.01z" fill="#167C32"></path>
-    <path d="M10.315 9.36L3.505 21.1h6.81l6.81-11.74z" fill="#F9AB00"></path>
+// Icono de Google Drive - Versión silueta monocromática en color sólido
+const GoogleDriveIcon = ({ size = 18, className = "" }: { size?: number, className?: string }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" className={`shrink-0 ${className}`} fill="currentColor">
+    <g>
+      <path d="M15.445 15.1l3.505-6.09h-3.505z" opacity="0.85"></path>
+      <path d="M10.315 15.45l3.505 6.09h-3.505z" opacity="0.85"></path>
+      <path d="M6.81 15.1l3.505-6.09H3.305z" opacity="0.85"></path>
+      <path d="M10.315 9.36L6.81 15.45l3.505 6.09 3.505-6.09z"></path>
+      <path d="M15.445 9.01L10.315 0h6.81l5.105 9.01z"></path>
+      <path d="M10.315 9.36L3.505 21.1h6.81l6.81-11.74z"></path>
+    </g>
   </svg>
 );
 
@@ -94,13 +96,13 @@ export default function App() {
   const [isHistoryDrawerOpen, setIsHistoryDrawerOpen] = useState(false);
   const [activeWorkspaceTab, setActiveWorkspaceTab] = useState<'visor' | 'markdown'>('visor');
 
-  // Referencia para procesar transparencia de logotipo sobre la marcha
+  // Referencia para procesar transparencia y recorte del logotipo
   const [logoSrc, setLogoSrc] = useState('/logo.png');
 
   // Referencias para arrastrar y soltar
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Algoritmo dinámico para remover el fondo sólido gris (#1A1E1F) del logotipo
+  // Algoritmo dinámico para remover el fondo sólido gris (#1A1E1F) y recortar márgenes vacíos del logotipo
   useEffect(() => {
     const img = new Image();
     img.src = '/logo.png';
@@ -113,18 +115,59 @@ export default function App() {
         ctx.drawImage(img, 0, 0);
         const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
         const data = imgData.data;
-        // Recorremos los píxeles y hacemos transparentes los que tengan un color cercano a (26, 30, 31)
-        for (let i = 0; i < data.length; i += 4) {
-          const r = data[i];
-          const g = data[i+1];
-          const b = data[i+2];
-          // Comprobar rango de tolerancia de color para #1A1E1F
-          if (r >= 20 && r <= 35 && g >= 20 && g <= 35 && b >= 20 && b <= 35) {
-            data[i+3] = 0; // Transparencia Alpha = 0
+        
+        let minX = canvas.width;
+        let minY = canvas.height;
+        let maxX = 0;
+        let maxY = 0;
+        let hasForeground = false;
+
+        // 1. Encontrar el recuadro delimitador real del logo y hacer transparente el fondo gris (#1A1E1F)
+        for (let y = 0; y < canvas.height; y++) {
+          for (let x = 0; x < canvas.width; x++) {
+            const idx = (y * canvas.width + x) * 4;
+            const r = data[idx];
+            const g = data[idx+1];
+            const b = data[idx+2];
+            
+            // Tolerancia de color para el fondo oscuro #1A1E1F
+            const isBg = r >= 20 && r <= 35 && g >= 20 && g <= 35 && b >= 20 && b <= 35;
+            
+            if (isBg) {
+              data[idx+3] = 0; // Transparente
+            } else {
+              hasForeground = true;
+              if (x < minX) minX = x;
+              if (x > maxX) maxX = x;
+              if (y < minY) minY = y;
+              if (y > maxY) maxY = y;
+            }
           }
         }
-        ctx.putImageData(imgData, 0, 0);
-        setLogoSrc(canvas.toDataURL());
+
+        if (hasForeground) {
+          // 2. Crear un canvas recortado para eliminar los márgenes transparentes enormes
+          const croppedWidth = maxX - minX + 1;
+          const croppedHeight = maxY - minY + 1;
+          
+          const croppedCanvas = document.createElement('canvas');
+          croppedCanvas.width = croppedWidth;
+          croppedCanvas.height = croppedHeight;
+          const croppedCtx = croppedCanvas.getContext('2d');
+          
+          if (croppedCtx) {
+            // Dibujar la imagen transparente original de vuelta al canvas principal antes de recortar
+            ctx.putImageData(imgData, 0, 0);
+            
+            // Copiar la zona recortada al nuevo canvas
+            croppedCtx.drawImage(canvas, minX, minY, croppedWidth, croppedHeight, 0, 0, croppedWidth, croppedHeight);
+            setLogoSrc(croppedCanvas.toDataURL());
+          }
+        } else {
+          // Fallback
+          ctx.putImageData(imgData, 0, 0);
+          setLogoSrc(canvas.toDataURL());
+        }
       }
     };
   }, []);
@@ -578,13 +621,13 @@ export default function App() {
         </div>
       )}
 
-      {/* Pantalla de carga animada con icono oficial de Google Drive */}
+      {/* Pantalla de carga animada con icono de Drive en color sólido */}
       {isSyncing && (
         <div className="fixed inset-0 bg-[#0F0F11]/90 backdrop-blur-xl z-[90] flex flex-col items-center justify-center">
           <div className="w-full max-w-md p-8 flex flex-col items-center text-center">
             <div className="relative mb-8">
               <div className="w-16 h-16 border-4 border-primary/20 border-t-primary rounded-full animate-spin"></div>
-              <div className="absolute inset-0 m-auto flex items-center justify-center">
+              <div className="absolute inset-0 m-auto flex items-center justify-center text-primary">
                 <GoogleDriveIcon size={26} />
               </div>
             </div>
@@ -601,12 +644,13 @@ export default function App() {
       {!isMobile && (
         <aside className="flex flex-col h-screen fixed left-0 top-0 z-40 bg-surface-container dark:bg-surface-container-high border-r border-outline-variant w-[260px] shrink-0 font-sans">
           <div className="p-6 flex flex-col h-full">
-            {/* Logo 4x más grande, transparente y procesado */}
-            <div className="mb-10 cursor-pointer px-2 flex justify-center hover:scale-102 transition-transform duration-200" onClick={handleGoDashboard} title="Ir al Dashboard">
+            
+            {/* Logo recortado dinámicamente: Ocupa la mayor parte de la cuadrícula superior del Sidebar */}
+            <div className="mb-8 cursor-pointer w-full flex justify-center items-center hover:scale-102 transition-transform duration-200" onClick={handleGoDashboard} title="Ir al Dashboard">
               <img 
                 src={logoSrc} 
                 alt="Logo de DocToMarkdown" 
-                className="w-full max-h-24 object-contain"
+                className="w-full max-h-32 object-contain"
               />
             </div>
 
@@ -636,18 +680,17 @@ export default function App() {
                 <span className="text-body-sm font-medium">Nuevo Documento</span>
               </button>
 
-              {/* Botón de Google Drive con opciones de Importación/Exportación Manuales */}
+              {/* Botón de Google Drive con opciones manuales de Backup e icono en color sólido */}
               {gdriveToken ? (
                 <div className="space-y-1.5 p-3 rounded-xl bg-white/5 border border-outline-variant/10">
                   <div className="flex items-center gap-2 mb-2 px-1 text-xs font-semibold text-white/80">
-                    <GoogleDriveIcon size={14} />
+                    <GoogleDriveIcon size={14} className="text-primary" />
                     <span>Google Drive Activo</span>
                   </div>
                   
                   <button 
                     onClick={handleManualExport}
                     className="w-full flex items-center gap-2 px-3 py-2 bg-primary/10 hover:bg-primary/20 border border-primary/20 text-primary rounded-lg text-[11px] font-medium transition-colors"
-                    title="Hacer copia de seguridad local en la nube ahora"
                   >
                     <Upload size={12} />
                     <span>Exportar a Drive</span>
@@ -656,7 +699,6 @@ export default function App() {
                   <button 
                     onClick={handleManualImport}
                     className="w-full flex items-center gap-2 px-3 py-2 bg-white/5 hover:bg-white/10 border border-white/5 text-white rounded-lg text-[11px] font-medium transition-colors"
-                    title="Restaurar copia de seguridad desde la nube"
                   >
                     <Download size={12} />
                     <span>Importar de Drive</span>
@@ -673,9 +715,10 @@ export default function App() {
               ) : (
                 <button 
                   onClick={handleConnectGoogleDrive}
-                  className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-surface border border-outline-variant hover:bg-surface-variant rounded-xl transition-all duration-200 group text-on-surface hover:text-white"
+                  className="w-full flex items-center gap-3 px-4 py-3 bg-white/5 border border-outline-variant/30 hover:bg-white/10 text-on-surface hover:text-white rounded-xl transition-all duration-200 group text-left"
                 >
-                  <GoogleDriveIcon size={18} />
+                  {/* Icono de Drive en color sólido monocromático */}
+                  <GoogleDriveIcon size={18} className="text-outline group-hover:text-primary transition-colors" />
                   <span className="text-body-sm font-medium">Google Drive Backup</span>
                 </button>
               )}
@@ -746,7 +789,7 @@ export default function App() {
       {/* Workspace principal */}
       <div className={`flex-1 flex flex-col ${isMobile ? 'ml-0' : 'ml-[260px]'} h-screen overflow-hidden pb-${isMobile ? '16' : '0'}`}>
         
-        {/* Header superior (Oculto completamente en el Dashboard por solicitud del usuario) */}
+        {/* Header superior (Oculto en Dashboard) */}
         {viewState !== 'dashboard' && (
           <header className="h-16 flex items-center justify-between px-6 bg-surface-container-low border-b border-outline-variant z-35 shrink-0">
             <div className="flex items-center gap-3 min-w-0">
@@ -807,7 +850,7 @@ export default function App() {
 
         {/* Zona de contenido dinámico */}
         {viewState === 'dashboard' && (
-          /* NUEVO DASHBOARD PREMIUM ANIMADO (Ocupa la pantalla completa directamente) */
+          /* NUEVO DASHBOARD PREMIUM ANIMADO */
           <main className="flex-1 p-6 sm:p-10 overflow-y-auto bg-background flex flex-col justify-start space-y-8 pb-24 sm:pb-10 min-h-screen">
             {/* Cabecera del Dashboard */}
             <div className="space-y-2 mt-4 animate-fade-in">
@@ -817,7 +860,7 @@ export default function App() {
               </p>
             </div>
 
-            {/* Fila de Tarjetas de Estadísticas Animadas (Responsive Grid) */}
+            {/* Fila de Tarjetas de Estadísticas (Icono Drive Silueta) */}
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
               {/* Card 1: Documentos Procesados */}
               <div className="glass-panel p-6 rounded-2xl flex flex-col justify-between hover:border-primary/30 transition-all duration-300 group">
@@ -861,11 +904,11 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Card 4: Sincronización en la Nube con Icono de Drive */}
+              {/* Card 4: Sincronización en la Nube con Icono de Drive Silueta */}
               <div className="glass-panel p-6 rounded-2xl flex flex-col justify-between hover:border-primary/30 transition-all duration-300 group min-w-0">
                 <div className="flex items-center justify-between text-outline mb-4">
                   <span className="text-xs font-semibold uppercase tracking-wider font-label-caps">Cloud Backup</span>
-                  <GoogleDriveIcon size={18} />
+                  <GoogleDriveIcon size={18} className={gdriveToken ? "text-green-400" : "text-outline"} />
                 </div>
                 <div className="min-w-0">
                   <h4 className={`text-lg sm:text-xl font-bold mb-1 truncate ${gdriveToken ? 'text-green-400' : 'text-outline'}`}>
@@ -1008,7 +1051,7 @@ export default function App() {
                 <div 
                   className="glass-panel flex-1 rounded-3xl p-5 flex flex-col items-center justify-center text-center hover:bg-white/5 transition-colors cursor-pointer group min-h-[140px]"
                 >
-                  <div className="w-10 h-10 bg-white/5 rounded-full flex items-center justify-center mb-3 group-hover:bg-white/10 transition-all">
+                  <div className="w-10 h-10 bg-white/5 rounded-full flex items-center justify-center mb-3 group-hover:bg-white/10 transition-all text-outline group-hover:text-primary">
                     <GoogleDriveIcon size={20} />
                   </div>
                   <p className="text-xs font-bold text-white mb-1">Google Drive Backup</p>
@@ -1053,7 +1096,7 @@ export default function App() {
               </div>
             </div>
 
-            {/* Listado de Cola de Procesamiento por Lotes */}
+            {/* Listado de Cola de Procesamiento */}
             {uploadQueue.length > 0 && (
               <div className="w-full max-w-4xl glass-panel rounded-3xl p-6 space-y-4 animate-fade-in">
                 <div className="flex items-center justify-between border-b border-outline-variant/30 pb-3">
