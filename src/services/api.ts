@@ -31,62 +31,70 @@ export const convertDocumentToMarkdown = async (
   const systemPrompt = 
     "Actúa como un experto en OCR y maquetación de documentos. Transcribe el siguiente archivo a formato Markdown estricto. Si encuentras tablas de contabilidad, balances o sumas y saldos, reconstrúyelas minuciosamente usando el formato estricto | columna |. No resumas, no te saltes párrafos, mantén intactos todos los valores numéricos con sus correspondientes signos y decimales, y respeta la jerarquía de títulos original utilizando # y ##.";
 
-  // Usamos gemini-1.5-flash o gemini-2.5-flash que admiten PDFs e imágenes natively
   const model = 'gemini-1.5-flash';
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+  
+  // Intentar de forma secuencial la versión de API estable v1 y luego v1beta
+  const apiVersions = ['v1', 'v1beta'];
+  let lastError: any = null;
 
-  const requestBody = {
-    contents: [
-      {
+  for (const apiVersion of apiVersions) {
+    const url = `https://generativelanguage.googleapis.com/${apiVersion}/models/${model}:generateContent?key=${apiKey}`;
+
+    const requestBody = {
+      contents: [
+        {
+          parts: [
+            {
+              inlineData: {
+                mimeType: fileMimeType,
+                data: base64Data
+              }
+            }
+          ]
+        }
+      ],
+      systemInstruction: {
         parts: [
           {
-            inlineData: {
-              mimeType: fileMimeType,
-              data: base64Data
-            }
+            text: systemPrompt
           }
         ]
-      }
-    ],
-    systemInstruction: {
-      parts: [
-        {
-          text: systemPrompt
-        }
-      ]
-    },
-    generationConfig: {
-      temperature: 0.1, // Baja temperatura para preservar datos exactos
-      topP: 0.95
-    }
-  };
-
-  try {
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
       },
-      body: JSON.stringify(requestBody)
-    });
+      generationConfig: {
+        temperature: 0.1, // Baja temperatura para preservar datos exactos
+        topP: 0.95
+      }
+    };
 
-    if (!response.ok) {
-      const errData = await response.json().catch(() => ({}));
-      const errMsg = errData.error?.message || `Error HTTP ${response.status}`;
-      throw new Error(errMsg);
+    try {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(requestBody)
+      });
+
+      if (!response.ok) {
+        const errData = await response.json().catch(() => ({}));
+        const errMsg = errData.error?.message || `Error HTTP ${response.status}`;
+        throw new Error(errMsg);
+      }
+
+      const resJson = await response.json();
+      
+      // Validar y extraer el texto de la respuesta de Gemini
+      const textResult = resJson.candidates?.[0]?.content?.parts?.[0]?.text;
+      if (!textResult) {
+        throw new Error('La respuesta de la IA no contenía texto estructurado.');
+      }
+
+      return textResult;
+    } catch (error: any) {
+      console.warn(`Fallo al invocar la API de Gemini usando la versión ${apiVersion}:`, error.message);
+      lastError = error;
     }
-
-    const resJson = await response.json();
-    
-    // Validar y extraer el texto de la respuesta de Gemini
-    const textResult = resJson.candidates?.[0]?.content?.parts?.[0]?.text;
-    if (!textResult) {
-      throw new Error('La respuesta de la IA no contenía texto estructurado.');
-    }
-
-    return textResult;
-  } catch (error: any) {
-    console.error('Error al invocar la API de Gemini:', error);
-    throw new Error(`Error en la extracción por IA: ${error.message || error}`);
   }
+
+  throw new Error(`Error en la extracción por IA: ${lastError?.message || 'Error desconocido'}`);
 };
