@@ -15,6 +15,25 @@ const fileToBase64 = (blob: Blob): Promise<string> => {
   });
 };
 
+// Consultar dinámicamente los modelos autorizados para esta API Key
+const fetchAvailableModels = async (apiKey: string): Promise<string[]> => {
+  try {
+    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`);
+    if (!res.ok) {
+      return [];
+    }
+    const data = await res.json();
+    if (data.models && Array.isArray(data.models)) {
+      return data.models
+        .filter((m: any) => m.supportedGenerationMethods?.includes('generateContent'))
+        .map((m: any) => m.name.replace('models/', ''));
+    }
+  } catch (e) {
+    console.error('Error al listar modelos disponibles:', e);
+  }
+  return [];
+};
+
 export const convertDocumentToMarkdown = async (
   fileBlob: Blob,
   fileMimeType: string,
@@ -31,7 +50,28 @@ export const convertDocumentToMarkdown = async (
   const systemPrompt = 
     "Actúa como un experto en OCR y maquetación de documentos. Transcribe el siguiente archivo a formato Markdown estricto. Si encuentras tablas de contabilidad, balances o sumas y saldos, reconstrúyelas minuciosamente usando el formato estricto | columna |. No resumas, no te saltes párrafos, mantén intactos todos los valores numéricos con sus correspondientes signos y decimales, y respeta la jerarquía de títulos original utilizando # y ##.";
 
-  const model = 'gemini-1.5-flash';
+  // Obtener modelos permitidos por la API Key del usuario
+  const availableModels = await fetchAvailableModels(apiKey);
+  console.log('Modelos disponibles detectados para esta clave:', availableModels);
+
+  // Intentar seleccionar el mejor modelo Flash disponible, con fallback a gemini-1.5-flash
+  let model = 'gemini-1.5-flash';
+  const preferredModels = [
+    'gemini-2.5-flash',
+    'gemini-2.0-flash',
+    'gemini-1.5-flash-latest',
+    'gemini-1.5-flash',
+    'gemini-1.5-pro'
+  ];
+
+  for (const pref of preferredModels) {
+    if (availableModels.includes(pref)) {
+      model = pref;
+      break;
+    }
+  }
+
+  console.log(`Modelo seleccionado para transcripción: ${model}`);
   
   // Intentar de forma secuencial la versión de API estable v1 y luego v1beta
   const apiVersions = ['v1', 'v1beta'];
@@ -96,5 +136,7 @@ export const convertDocumentToMarkdown = async (
     }
   }
 
-  throw new Error(`Error en la extracción por IA: ${lastError?.message || 'Error desconocido'}`);
+  // Si fallan ambos intentos, arrojar un error descriptivo con la lista de modelos detectados
+  const modelListStr = availableModels.length > 0 ? availableModels.join(', ') : 'Ninguno detectado';
+  throw new Error(`Error en la extracción por IA: ${lastError?.message || 'Error desconocido'}. [Modelos disponibles para tu clave: ${modelListStr}]`);
 };
