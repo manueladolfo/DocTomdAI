@@ -435,9 +435,10 @@ export default function App() {
       {/* Sidebar lateral */}
       <aside className="flex flex-col h-screen fixed left-0 top-0 z-40 bg-surface-container dark:bg-surface-container-high border-r border-outline-variant w-[260px] shrink-0">
         <div className="p-6 flex flex-col h-full">
-          {/* Logo */}
           <div className="flex items-center gap-3 mb-8 cursor-pointer" onClick={handleNewDocument}>
-            <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center text-on-primary font-bold">D</div>
+            <div className="w-8 h-8 rounded-lg overflow-hidden flex items-center justify-center">
+              <img src="/logo.png" alt="DocToMarkdown Logo" className="w-full h-full object-cover rounded-lg" />
+            </div>
             <div>
               <h1 className="text-title-sm font-title-sm font-bold text-on-surface tracking-tight leading-none">DocToMarkdown</h1>
               <p className="text-[9px] uppercase tracking-widest text-outline mt-1 font-label-caps">Precision OCR</p>
