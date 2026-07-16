@@ -59,8 +59,8 @@ export default function App() {
   const [isConverting, setIsConverting] = useState(false);
   const [historyList, setHistoryList] = useState<Conversion[]>([]);
   const [filesList, setFilesList] = useState<StoredFile[]>([]);
-  const [geminiApiKey, setGeminiApiKey] = useState<string>(localStorage.getItem('gemini_api_key') || '');
-  const [googleClientId, setGoogleClientId] = useState<string>(localStorage.getItem('gdrive_client_id') || '');
+  const [geminiApiKey, setGeminiApiKey] = useState<string>(localStorage.getItem('gemini_api_key') || import.meta.env.VITE_GEMINI_API_KEY || '');
+  const [googleClientId, setGoogleClientId] = useState<string>(localStorage.getItem('gdrive_client_id') || import.meta.env.VITE_GOOGLE_CLIENT_ID || '');
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
   
