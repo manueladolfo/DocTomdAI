@@ -722,12 +722,16 @@ export default function App() {
                 <span className="text-body-sm font-medium">Nuevo Documento</span>
               </button>
 
-              {/* Botón de Google Drive con opciones manuales de Backup e icono de Nube en color sólido */}
+              {/* Botón de Google Drive con indicador de conexión y opciones de Backup */}
               {gdriveToken ? (
                 <div className="space-y-1.5 p-3 rounded-xl bg-white/5 border border-outline-variant/10">
-                  <div className="flex items-center gap-2 mb-2 px-1 text-xs font-semibold text-white/80">
-                    <Cloud size={14} className="text-primary" />
-                    <span>Google Drive Activo</span>
+                  <div className="flex items-center justify-between mb-2 px-1 text-xs font-semibold text-white/80">
+                    <div className="flex items-center gap-2">
+                      <Cloud size={14} className="text-primary" />
+                      <span>Google Drive Activo</span>
+                    </div>
+                    {/* Puntito verde de estado activo */}
+                    <div className="w-2 h-2 rounded-full bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.7)] animate-pulse"></div>
                   </div>
                   
                   <button 
@@ -757,10 +761,14 @@ export default function App() {
               ) : (
                 <button 
                   onClick={handleConnectGoogleDrive}
-                  className="w-full flex items-center gap-3 px-4 py-3 bg-white/5 border border-outline-variant/30 hover:bg-white/10 text-on-surface hover:text-white rounded-xl transition-all duration-200 group text-left"
+                  className="w-full flex items-center justify-between px-4 py-3 bg-white/5 border border-outline-variant/30 hover:bg-white/10 text-on-surface hover:text-white rounded-xl transition-all duration-200 group text-left"
                 >
-                  <Cloud size={18} className="text-outline group-hover:text-primary transition-colors" />
-                  <span className="text-body-sm font-medium">Google Drive Backup</span>
+                  <div className="flex items-center gap-3">
+                    <Cloud size={18} className="text-outline group-hover:text-primary transition-colors" />
+                    <span className="text-body-sm font-medium">Vincular Google Drive</span>
+                  </div>
+                  {/* Puntito rojo de estado desconectado */}
+                  <div className="w-2 h-2 rounded-full bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.7)] shrink-0"></div>
                 </button>
               )}
             </div>
@@ -1137,12 +1145,21 @@ export default function App() {
               {/* Sincronización Google Drive (Icono Nube Silueta) y Privacidad */}
               <div className="col-span-1 sm:col-span-4 flex flex-col gap-6">
                 <div 
+                  onClick={!gdriveToken ? (e) => { e.stopPropagation(); handleConnectGoogleDrive(); } : undefined}
                   className="glass-panel flex-1 rounded-3xl p-5 flex flex-col items-center justify-center text-center hover:bg-white/5 transition-colors cursor-pointer group min-h-[140px]"
                 >
-                  <div className="w-10 h-10 bg-white/5 rounded-full flex items-center justify-center mb-3 group-hover:bg-white/10 transition-all text-outline group-hover:text-primary">
-                    <Cloud size={20} />
+                  <div className="w-10 h-10 bg-white/5 rounded-full flex items-center justify-center mb-3 group-hover:bg-white/10 transition-all text-outline group-hover:text-primary relative">
+                    <Cloud size={20} className={gdriveToken ? "text-primary" : ""} />
+                    {/* Puntito de estado según si está conectado o no */}
+                    {gdriveToken ? (
+                      <div className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.7)] animate-pulse"></div>
+                    ) : (
+                      <div className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.7)]"></div>
+                    )}
                   </div>
-                  <p className="text-xs font-bold text-white mb-1">Google Drive Backup</p>
+                  <p className="text-xs font-bold text-white mb-1">
+                    {gdriveToken ? 'Google Drive Activo' : 'Vincular Google Drive'}
+                  </p>
                   
                   {gdriveToken ? (
                     <div className="w-full space-y-1.5 mt-2">
