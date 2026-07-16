@@ -18,7 +18,10 @@ import {
   Key,
   Globe,
   RefreshCw,
-  Loader2
+  Loader2,
+  Clock,
+  HardDrive,
+  Plus
 } from 'lucide-react';
 import { useFileStorage, type StoredFile } from './hooks/useFileStorage';
 import { useConversionHistory, type Conversion } from './hooks/useConversionHistory';
@@ -37,6 +40,7 @@ export default function App() {
   const historyStorage = useConversionHistory();
 
   // Estados de la aplicación
+  const [viewState, setViewState] = useState<'dashboard' | 'import' | 'workspace'>('dashboard');
   const [currentFile, setCurrentFile] = useState<StoredFile | null>(null);
   const [convertedMarkdown, setConvertedMarkdown] = useState<string>('');
   const [activeTab, setActiveTab] = useState<'preview' | 'code'>('code');
@@ -106,6 +110,7 @@ export default function App() {
       const stored = await fileStorage.storeFile(id, file.name, file, file.type);
       setCurrentFile(stored);
       setConvertedMarkdown('');
+      setViewState('workspace');
       showToast(`Archivo "${file.name}" cargado localmente.`, 'success');
       loadLocalData();
     } catch (error) {
@@ -278,10 +283,9 @@ export default function App() {
     if (file) {
       setCurrentFile(file);
       setConvertedMarkdown(item.texto_md_resultado);
+      setViewState('workspace');
       showToast(`Cargado archivo "${item.nombre_archivo}" del historial.`, 'success');
     } else {
-      // Si el archivo binario no está en local por alguna razón, recreamos un visor mock
-      // pero cargamos el markdown
       setCurrentFile({
         id: item.id,
         name: item.nombre_archivo,
@@ -290,14 +294,23 @@ export default function App() {
         uploadedAt: item.fecha_conversion
       });
       setConvertedMarkdown(item.texto_md_resultado);
-      showToast(`Mostrando Markdown para "${item.nombre_archivo}" (archivo de origen no encontrado en caché local).`, 'success');
+      setViewState('workspace');
+      showToast(`Mostrando Markdown para "${item.nombre_archivo}" (archivo de origen no encontrado).`, 'success');
     }
   };
 
-  // Limpiar y volver al dashboard
+  // Ir a la pantalla de nuevo documento
   const handleNewDocument = () => {
     setCurrentFile(null);
     setConvertedMarkdown('');
+    setViewState('import');
+  };
+
+  // Ir al Dashboard de bienvenida
+  const handleGoDashboard = () => {
+    setCurrentFile(null);
+    setConvertedMarkdown('');
+    setViewState('dashboard');
   };
 
   // Descarga local
@@ -306,34 +319,40 @@ export default function App() {
     downloadMarkdown(currentFile.name, convertedMarkdown);
   };
 
+  // Calcular tamaño estimado de IndexedDB
+  const calculateStorageSize = () => {
+    let size = 0;
+    for (const file of filesList) {
+      size += file.blob.size;
+    }
+    for (const h of historyList) {
+      size += new Blob([h.texto_md_resultado]).size;
+    }
+    
+    if (size === 0) return '0 KB';
+    if (size < 1024 * 1024) {
+      return `${(size / 1024).toFixed(1)} KB`;
+    }
+    return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+  };
+
   // Renderizar Markdown básico a HTML para previsualización
   const renderMarkdownToHtml = (md: string) => {
     if (!md) return '<p class="text-on-surface-variant italic">No hay contenido convertido.</p>';
 
-    // Escapar HTML para evitar XSS
     let html = md
       .replace(/&/g, '&amp;')
       .replace(/</g, '&lt;')
       .replace(/>/g, '&gt;');
 
-    // Títulos
     html = html.replace(/^# (.*?)$/gm, '<h1 class="text-2xl font-bold border-b border-outline-variant/30 pb-2 mb-4 mt-6 text-white">$1</h1>');
     html = html.replace(/^## (.*?)$/gm, '<h2 class="text-xl font-semibold mb-3 mt-4 text-primary">$1</h2>');
     html = html.replace(/^### (.*?)$/gm, '<h3 class="text-lg font-medium mb-2 mt-3 text-on-surface">$1</h3>');
-
-    // Negrita
     html = html.replace(/\*\*(.*?)\*\*/g, '<strong class="font-bold text-white">$1</strong>');
-    
-    // Bloques de código
     html = html.replace(/```([\s\S]*?)```/g, '<pre class="bg-surface-container p-4 rounded-xl font-mono text-sm border border-outline-variant/20 overflow-auto my-4 text-on-surface-variant">$1</pre>');
-    
-    // Código en línea
     html = html.replace(/`(.*?)`/g, '<code class="bg-surface-container-high px-1.5 py-0.5 rounded font-mono text-xs text-primary">$1</code>');
-
-    // Citas
     html = html.replace(/^> (.*?)$/gm, '<blockquote class="border-l-4 border-primary bg-white/5 pl-4 py-2 rounded-r my-4 italic text-on-surface-variant">$1</blockquote>');
 
-    // Tablas
     const lines = html.split('\n');
     let inTable = false;
     let tableHtml = '';
@@ -341,7 +360,6 @@ export default function App() {
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i].trim();
       if (line.startsWith('|') && line.endsWith('|')) {
-        // Ignorar líneas separadoras de cabecera: |---|---|
         if (line.includes('---')) continue;
         
         if (!inTable) {
@@ -358,7 +376,6 @@ export default function App() {
           if (isHeader) {
             tableHtml += `<th class="px-4 py-3 bg-surface-container-high font-bold text-xs uppercase text-primary border-b border-outline-variant/20">${content}</th>`;
           } else {
-            // Alinear números a la derecha
             const isNumber = /^-?\d+(\.\d+)?%?$/.test(content.replace(/[\s€$]/g, ''));
             tableHtml += `<td class="px-4 py-3 text-sm text-on-surface-variant ${isNumber ? 'text-right font-mono' : ''}">${content}</td>`;
           }
@@ -381,9 +398,7 @@ export default function App() {
       html = lines.join('\n');
     }
 
-    // Párrafos y Saltos de línea
     html = html.replace(/^(?!<(h1|h2|h3|pre|blockquote|div|table|tr|th|td|li|ul))+(.*?)$/gm, '<p class="mb-3 text-on-surface-variant leading-relaxed">$2</p>');
-
     return html;
   };
 
@@ -415,7 +430,7 @@ export default function App() {
         </div>
       )}
 
-      {/* Pantalla de carga animada premium para sincronización de Google Drive */}
+      {/* Pantalla de carga animada para sincronización de Google Drive */}
       {isSyncing && (
         <div className="fixed inset-0 bg-[#0F0F11]/90 backdrop-blur-xl z-[90] flex flex-col items-center justify-center">
           <div className="w-full max-w-md p-8 flex flex-col items-center text-center">
@@ -435,14 +450,9 @@ export default function App() {
       {/* Sidebar lateral */}
       <aside className="flex flex-col h-screen fixed left-0 top-0 z-40 bg-surface-container dark:bg-surface-container-high border-r border-outline-variant w-[260px] shrink-0">
         <div className="p-6 flex flex-col h-full">
-          <div className="flex items-center gap-3 mb-8 cursor-pointer" onClick={handleNewDocument}>
-            <div className="w-8 h-8 rounded-lg overflow-hidden flex items-center justify-center">
-              <img src="/logo.png" alt="DocToMarkdown Logo" className="w-full h-full object-cover rounded-lg" />
-            </div>
-            <div>
-              <h1 className="text-title-sm font-title-sm font-bold text-on-surface tracking-tight leading-none">DocToMarkdown</h1>
-              <p className="text-[9px] uppercase tracking-widest text-outline mt-1 font-label-caps">Precision OCR</p>
-            </div>
+          {/* Logo ocupando gran parte de arriba a la izquierda sin textos adicionales */}
+          <div className="mb-8 cursor-pointer px-2 flex justify-center" onClick={handleGoDashboard}>
+            <img src="/logo.png" alt="Logo de DocToMarkdown" className="w-full max-h-14 object-contain" />
           </div>
 
           {/* Botones de control rápido */}
@@ -450,12 +460,12 @@ export default function App() {
             <button 
               onClick={handleNewDocument}
               className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200 ${
-                !currentFile 
-                  ? 'bg-primary-container text-on-primary-container font-semibold' 
+                viewState === 'import' 
+                  ? 'bg-primary-container text-on-primary-container font-semibold shadow-lg shadow-primary/10' 
                   : 'bg-white/5 hover:bg-white/10 text-on-surface-variant hover:text-on-surface'
               }`}
             >
-              <Upload size={18} />
+              <Plus size={18} />
               <span className="text-body-sm font-medium">Nuevo Documento</span>
             </button>
 
@@ -506,7 +516,7 @@ export default function App() {
                       key={item.id} 
                       onClick={() => handleSelectHistoryItem(item)}
                       className={`group flex items-center justify-between px-3 py-2.5 rounded-lg cursor-pointer transition-all duration-150 ${
-                        currentFile?.id === item.id 
+                        currentFile?.id === item.id && viewState === 'workspace'
                           ? 'bg-primary/10 text-primary border-l-2 border-primary' 
                           : 'text-on-surface-variant hover:bg-white/5 hover:text-on-surface'
                       }`}
@@ -522,7 +532,7 @@ export default function App() {
                             await historyStorage.deleteConversion(item.id);
                             await fileStorage.deleteFile(item.id);
                             if (currentFile?.id === item.id) {
-                              handleNewDocument();
+                              handleGoDashboard();
                             }
                             loadLocalData();
                           }
@@ -538,7 +548,7 @@ export default function App() {
             </div>
           </div>
 
-          {/* Ajustes y Botón inferior */}
+          {/* Ajustes */}
           <div className="mt-auto pt-4 border-t border-outline-variant/30 space-y-1">
             <button 
               onClick={() => setIsSettingsOpen(true)}
@@ -556,19 +566,21 @@ export default function App() {
         {/* Header superior */}
         <header className="h-16 flex items-center justify-between px-8 bg-surface-container-low border-b border-outline-variant z-35 shrink-0">
           <div className="flex items-center gap-3">
-            {currentFile && (
-              <button onClick={handleNewDocument} className="p-1.5 hover:bg-white/10 rounded-lg transition-colors text-outline hover:text-white mr-2">
+            {viewState !== 'dashboard' && (
+              <button onClick={handleGoDashboard} className="p-1.5 hover:bg-white/10 rounded-lg transition-colors text-outline hover:text-white mr-2">
                 <ArrowLeft size={16} />
               </button>
             )}
             <FileText className="text-primary shrink-0" size={18} />
             <h2 className="text-body-md font-medium text-white truncate max-w-md">
-              {currentFile ? currentFile.name : 'Importar Documento'}
+              {viewState === 'dashboard' && 'Dashboard Principal'}
+              {viewState === 'import' && 'Nuevo Documento / Importar'}
+              {viewState === 'workspace' && currentFile && currentFile.name}
             </h2>
           </div>
           
           <div className="flex items-center gap-3">
-            {currentFile && (
+            {viewState === 'workspace' && currentFile && (
               <>
                 <button 
                   onClick={handleConvert}
@@ -604,20 +616,166 @@ export default function App() {
           </div>
         </header>
 
-        {/* Zona de contenido dinámico (Dashboard o 3 Columnas) */}
-        {!currentFile ? (
-          /* DASHBOARD PRINCIPAL */
-          <main className="flex-1 p-8 overflow-y-auto flex flex-col items-center justify-center relative">
+        {/* Zona de contenido dinámico */}
+        {viewState === 'dashboard' && (
+          /* NUEVO DASHBOARD PREMIUM ANIMADO */
+          <main className="flex-1 p-10 overflow-y-auto bg-background flex flex-col justify-between">
+            {/* Cabecera del Dashboard */}
+            <div className="space-y-2 mt-4 animate-fade-in">
+              <h3 className="text-3xl font-bold text-white tracking-tight">Bienvenido a DocToMarkdown</h3>
+              <p className="text-on-surface-variant text-sm max-w-2xl">
+                Tu centro local de transcripción y maquetación de archivos. Convierte PDFs y capturas a Markdown de forma privada e instantánea.
+              </p>
+            </div>
+
+            {/* Fila de Tarjetas de Estadísticas Animadas */}
+            <div className="grid grid-cols-4 gap-6 my-8">
+              {/* Card 1: Documentos Procesados */}
+              <div className="glass-panel p-6 rounded-2xl flex flex-col justify-between hover:border-primary/30 transition-all duration-300 group">
+                <div className="flex items-center justify-between text-outline mb-4">
+                  <span className="text-xs font-semibold uppercase tracking-wider font-label-caps">Procesados</span>
+                  <FileText className="text-primary group-hover:scale-110 transition-transform" size={18} />
+                </div>
+                <div>
+                  <h4 className="text-4xl font-extrabold text-white mb-1 animate-pulse-slow">
+                    {historyList.length}
+                  </h4>
+                  <p className="text-[11px] text-on-surface-variant">Archivos en base de datos local</p>
+                </div>
+              </div>
+
+              {/* Card 2: Tiempo Ahorrado */}
+              <div className="glass-panel p-6 rounded-2xl flex flex-col justify-between hover:border-primary/30 transition-all duration-300 group">
+                <div className="flex items-center justify-between text-outline mb-4">
+                  <span className="text-xs font-semibold uppercase tracking-wider font-label-caps">Tiempo Ahorrado</span>
+                  <Clock className="text-amber-400 group-hover:rotate-12 transition-transform" size={18} />
+                </div>
+                <div>
+                  <h4 className="text-4xl font-extrabold text-white mb-1">
+                    {(historyList.length * 2.5).toFixed(0)} min
+                  </h4>
+                  <p className="text-[11px] text-on-surface-variant">Estimado a 2.5 min por doc</p>
+                </div>
+              </div>
+
+              {/* Card 3: Uso de Almacenamiento */}
+              <div className="glass-panel p-6 rounded-2xl flex flex-col justify-between hover:border-primary/30 transition-all duration-300 group">
+                <div className="flex items-center justify-between text-outline mb-4">
+                  <span className="text-xs font-semibold uppercase tracking-wider font-label-caps">Espacio Local</span>
+                  <HardDrive className="text-blue-400 group-hover:scale-110 transition-transform" size={18} />
+                </div>
+                <div>
+                  <h4 className="text-4xl font-extrabold text-white mb-1">
+                    {calculateStorageSize()}
+                  </h4>
+                  <p className="text-[11px] text-on-surface-variant">Caché IndexedDB utilizada</p>
+                </div>
+              </div>
+
+              {/* Card 4: Sincronización en la Nube */}
+              <div className="glass-panel p-6 rounded-2xl flex flex-col justify-between hover:border-primary/30 transition-all duration-300 group">
+                <div className="flex items-center justify-between text-outline mb-4">
+                  <span className="text-xs font-semibold uppercase tracking-wider font-label-caps">Cloud Backup</span>
+                  <Cloud className={gdriveToken ? "text-green-400 animate-pulse" : "text-outline"} size={18} />
+                </div>
+                <div>
+                  <h4 className={`text-xl font-bold mb-1 ${gdriveToken ? 'text-green-400' : 'text-outline'}`}>
+                    {gdriveToken ? 'Sincronizado' : 'Desconectado'}
+                  </h4>
+                  <p className="text-[11px] text-on-surface-variant">
+                    {gdriveToken ? 'Respaldo activo en Google Drive' : 'Vincular Google Drive en Ajustes'}
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* Gran Botón de Acción Central (Bento style) */}
+            <div className="grid grid-cols-12 gap-6 items-stretch mb-4">
+              <div 
+                onClick={handleNewDocument}
+                className="col-span-8 glass-panel rounded-3xl p-8 flex flex-col justify-between group cursor-pointer hover:bg-white/5 transition-all duration-300 hover:border-primary/40 relative overflow-hidden"
+              >
+                <div className="absolute top-0 right-0 w-64 h-64 bg-primary/5 rounded-full blur-3xl pointer-events-none group-hover:bg-primary/10 transition-colors"></div>
+                <div className="flex justify-between items-start mb-12 relative z-10">
+                  <div className="w-12 h-12 rounded-2xl bg-primary/10 flex items-center justify-center text-primary group-hover:scale-105 transition-transform">
+                    <Upload size={24} />
+                  </div>
+                  <span className="text-xs font-label-caps uppercase tracking-wider text-primary border border-primary/20 px-3 py-1 rounded-full bg-primary/5">
+                    Comenzar
+                  </span>
+                </div>
+                <div className="relative z-10">
+                  <h4 className="text-2xl font-bold text-white mb-2 group-hover:text-primary transition-colors flex items-center gap-2">
+                    Iniciar Nueva Conversión
+                    <span className="material-symbols-outlined text-[20px] transform group-hover:translate-x-1 transition-transform">arrow_forward</span>
+                  </h4>
+                  <p className="text-on-surface-variant text-sm max-w-lg leading-relaxed">
+                    Sube un nuevo PDF, presupuesto, balance de sumas y saldos, o una captura para convertirla a Markdown estructurado al instante.
+                  </p>
+                </div>
+              </div>
+
+              <div 
+                onClick={() => setIsSettingsOpen(true)}
+                className="col-span-4 glass-panel rounded-3xl p-8 flex flex-col justify-between group cursor-pointer hover:bg-white/5 transition-all duration-300 hover:border-primary/30 relative overflow-hidden"
+              >
+                <div className="flex justify-between items-start mb-12">
+                  <div className="w-12 h-12 rounded-2xl bg-white/5 flex items-center justify-center text-outline group-hover:scale-105 transition-transform">
+                    <Settings size={24} />
+                  </div>
+                </div>
+                <div>
+                  <h4 className="text-lg font-bold text-white mb-1 group-hover:text-white/80 transition-colors">Ajustes de API</h4>
+                  <p className="text-xs text-on-surface-variant leading-relaxed">
+                    Introduce tu API Key de Gemini y Google Client ID para habilitar la transcripción automática y los respaldos.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* Actividad Reciente */}
+            {historyList.length > 0 && (
+              <div className="mt-4">
+                <h4 className="text-xs font-bold font-label-caps uppercase tracking-widest text-outline mb-3 flex items-center gap-2">
+                  <Clock size={12} />
+                  <span>Últimos documentos procesados</span>
+                </h4>
+                <div className="grid grid-cols-3 gap-4">
+                  {historyList.slice(0, 3).map((item) => (
+                    <div 
+                      key={item.id} 
+                      onClick={() => handleSelectHistoryItem(item)}
+                      className="glass-panel p-4 rounded-xl cursor-pointer hover:bg-white/5 hover:border-outline transition-all duration-200 flex items-center gap-3"
+                    >
+                      <div className="w-8 h-8 rounded-lg bg-surface-container flex items-center justify-center text-primary">
+                        <FileText size={16} />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <p className="text-xs font-semibold text-white truncate">{item.nombre_archivo}</p>
+                        <p className="text-[10px] text-outline mt-0.5">
+                          {new Date(item.fecha_conversion).toLocaleDateString('es-ES', { day: 'numeric', month: 'short' })}
+                        </p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </main>
+        )}
+
+        {viewState === 'import' && (
+          /* PANTALLA DE CARGA DE NUEVO DOCUMENTO (DROPZONE ANTERIOR) */
+          <main className="flex-1 p-8 overflow-y-auto flex flex-col items-center justify-center relative bg-background">
             <div className="w-full max-w-4xl text-center mb-10">
-              <h3 className="text-3xl font-bold text-white mb-2 leading-tight">Crea tu Markdown</h3>
+              <h3 className="text-3xl font-bold text-white mb-2 leading-tight">Carga tu documento</h3>
               <p className="text-on-surface-variant text-sm">
-                Arrastra y suelta tus archivos PDF o imágenes para convertirlos en código Markdown limpio y estructurado en segundos.
+                Arrastra y suelta tus archivos para iniciar la conversión con la API de Gemini.
               </p>
             </div>
 
             {/* Layout Bento de Carga */}
             <div className="grid grid-cols-12 gap-6 w-full max-w-4xl h-[400px]">
-              {/* Dropzone principal */}
               <div 
                 onDragOver={handleDragOver}
                 onDrop={handleDrop}
@@ -654,7 +812,6 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Botón rápido Google Drive */}
               <div className="col-span-4 flex flex-col gap-6">
                 <div 
                   onClick={gdriveToken ? handleManualSync : handleConnectGoogleDrive}
@@ -672,7 +829,7 @@ export default function App() {
                   </div>
                   <p className="text-sm font-bold text-white mb-1">Google Drive</p>
                   <p className="text-[11px] text-on-surface-variant mb-4 px-2 leading-snug">
-                    {gdriveToken ? 'Respaldo activo en tu nube.' : 'Importa y sincroniza desde tu nube de Google.'}
+                    {gdriveToken ? 'Respaldo activo en tu nube.' : 'Sincroniza y respalda en tu nube de Google.'}
                   </p>
                   <button className="w-full py-2 rounded-lg bg-white/5 border border-white/10 text-white font-medium text-xs hover:bg-white/10 transition-colors">
                     {gdriveToken ? 'Sincronizar ahora' : 'Vincular cuenta'}
@@ -694,7 +851,6 @@ export default function App() {
               </div>
             </div>
 
-            {/* Footer */}
             <div className="mt-8 flex items-center gap-6 opacity-60 text-xs text-outline">
               <span className="flex items-center gap-1">
                 <span className="material-symbols-outlined text-[14px]">lock</span>
@@ -706,7 +862,9 @@ export default function App() {
               </span>
             </div>
           </main>
-        ) : (
+        )}
+
+        {viewState === 'workspace' && currentFile && (
           /* WORKSPACE DE 3 COLUMNAS */
           <div className="flex-1 flex overflow-hidden">
             {/* Columna 2: Visor de Documento */}
@@ -737,7 +895,6 @@ export default function App() {
                 >
                   {currentFile.type === 'application/pdf' ? (
                     fileUrl ? (
-                      /* Si es PDF y tiene objeto URL, lo incrustamos con embed/iframe */
                       <iframe 
                         src={`${fileUrl}#toolbar=0&navpanes=0&scrollbar=0`} 
                         className="w-full aspect-[1/1.414] border-none"
@@ -791,7 +948,6 @@ export default function App() {
 
               <div className="flex-1 overflow-y-auto p-6">
                 {isConverting ? (
-                  /* Esqueleto de carga durante conversión */
                   <div className="space-y-6 skeleton-item">
                     <div className="w-1/3 h-5 bg-surface-container-highest rounded"></div>
                     <div className="w-3/4 h-10 bg-surface-container-highest rounded-xl"></div>
@@ -803,15 +959,6 @@ export default function App() {
                       <div className="space-y-1.5">
                         <div className="w-12 h-2.5 bg-primary/20 rounded"></div>
                         <div className="w-24 h-4 bg-surface-container-highest rounded"></div>
-                      </div>
-                    </div>
-                    <div className="w-1/2 h-5 bg-surface-container-highest rounded mt-8"></div>
-                    <div className="border border-outline-variant/10 rounded-xl overflow-hidden divide-y divide-outline-variant/10">
-                      <div className="bg-surface-container-high/40 p-3 h-8"></div>
-                      <div className="p-4 space-y-3">
-                        <div className="w-full h-4 bg-surface-container-highest rounded"></div>
-                        <div className="w-5/6 h-4 bg-surface-container-highest rounded"></div>
-                        <div className="w-2/3 h-4 bg-surface-container-highest rounded"></div>
                       </div>
                     </div>
                   </div>
@@ -870,7 +1017,7 @@ export default function App() {
                   className="w-full px-4 h-11 bg-surface rounded-xl border border-outline-variant/40 text-sm text-white focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary transition-all"
                 />
                 <p className="text-[10px] text-outline leading-snug">
-                  La API key se utiliza exclusivamente para realizar las llamadas de conversión desde tu navegador y se guarda localmente. Puedes conseguir una gratis en Google AI Studio.
+                  La API key se utiliza exclusivamente para realizar las llamadas de conversión desde tu navegador. Consíguela en Google AI Studio.
                 </p>
               </div>
 
@@ -888,7 +1035,7 @@ export default function App() {
                   className="w-full px-4 h-11 bg-surface rounded-xl border border-outline-variant/40 text-sm text-white focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary transition-all"
                 />
                 <p className="text-[10px] text-outline leading-snug">
-                  Requerido para la autenticación de OAuth 2.0 de Google Drive. Consíguelo en Google Cloud Console creando una credencial de tipo "ID de cliente de OAuth" (Aplicación web).
+                  Requerido para la autenticación de OAuth 2.0 de Google Drive. Consíguelo en Google Cloud Console creando una credencial de tipo "ID de cliente de OAuth".
                 </p>
               </div>
             </div>
