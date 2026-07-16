@@ -5,6 +5,8 @@ export interface Conversion {
   nombre_archivo: string;
   fecha_conversion: string;
   texto_md_resultado: string;
+  status?: 'success' | 'error';
+  errorMsg?: string;
 }
 
 // Crear instancia dedicada de localForage para el historial de conversiones
@@ -17,13 +19,17 @@ export const useConversionHistory = () => {
   const saveConversion = async (
     id: string,
     nombre_archivo: string,
-    texto_md_resultado: string
+    texto_md_resultado: string,
+    status: 'success' | 'error' = 'success',
+    errorMsg?: string
   ): Promise<Conversion> => {
     const newConversion: Conversion = {
       id,
       nombre_archivo,
       fecha_conversion: new Date().toISOString(),
-      texto_md_resultado
+      texto_md_resultado,
+      status,
+      errorMsg
     };
     await historyStore.setItem(id, newConversion);
     return newConversion;

@@ -22,7 +22,9 @@ import {
   Plus,
   Home,
   X,
-  AlertTriangle
+  AlertTriangle,
+  Cloud,
+  Copy
 } from 'lucide-react';
 import { useFileStorage, type StoredFile } from './hooks/useFileStorage';
 import { useConversionHistory, type Conversion } from './hooks/useConversionHistory';
@@ -44,20 +46,6 @@ interface QueueItem {
   status: 'pending' | 'processing' | 'success' | 'error';
   errorMsg?: string;
 }
-
-// Icono de Google Drive - Versión silueta monocromática en color sólido
-const GoogleDriveIcon = ({ size = 18, className = "" }: { size?: number, className?: string }) => (
-  <svg width={size} height={size} viewBox="0 0 24 24" className={`shrink-0 ${className}`} fill="currentColor">
-    <g>
-      <path d="M15.445 15.1l3.505-6.09h-3.505z" opacity="0.85"></path>
-      <path d="M10.315 15.45l3.505 6.09h-3.505z" opacity="0.85"></path>
-      <path d="M6.81 15.1l3.505-6.09H3.305z" opacity="0.85"></path>
-      <path d="M10.315 9.36L6.81 15.45l3.505 6.09 3.505-6.09z"></path>
-      <path d="M15.445 9.01L10.315 0h6.81l5.105 9.01z"></path>
-      <path d="M10.315 9.36L3.505 21.1h6.81l6.81-11.74z"></path>
-    </g>
-  </svg>
-);
 
 export default function App() {
   const fileStorage = useFileStorage();
@@ -95,6 +83,11 @@ export default function App() {
   const [isMobile, setIsMobile] = useState(false);
   const [isHistoryDrawerOpen, setIsHistoryDrawerOpen] = useState(false);
   const [activeWorkspaceTab, setActiveWorkspaceTab] = useState<'visor' | 'markdown'>('visor');
+
+  // Estados para visualizar Markdown flotante premium
+  const [selectedMarkdownText, setSelectedMarkdownText] = useState<string | null>(null);
+  const [selectedMarkdownFileName, setSelectedMarkdownFileName] = useState<string>('');
+  const [isCopied, setIsCopied] = useState(false);
 
   // Referencia para procesar transparencia y recorte del logotipo
   const [logoSrc, setLogoSrc] = useState('/logo.png');
@@ -156,15 +149,11 @@ export default function App() {
           const croppedCtx = croppedCanvas.getContext('2d');
           
           if (croppedCtx) {
-            // Dibujar la imagen transparente original de vuelta al canvas principal antes de recortar
             ctx.putImageData(imgData, 0, 0);
-            
-            // Copiar la zona recortada al nuevo canvas
             croppedCtx.drawImage(canvas, minX, minY, croppedWidth, croppedHeight, 0, 0, croppedWidth, croppedHeight);
             setLogoSrc(croppedCanvas.toDataURL());
           }
         } else {
-          // Fallback
           ctx.putImageData(imgData, 0, 0);
           setLogoSrc(canvas.toDataURL());
         }
@@ -270,7 +259,7 @@ export default function App() {
         const result = await convertDocumentToMarkdown(stored.blob, stored.type, geminiApiKey);
         
         setUploadQueue(prev => prev.map(q => q.id === item.id ? { ...q, progress: 90 } : q));
-        await historyStorage.saveConversion(stored.id, stored.name, result);
+        await historyStorage.saveConversion(stored.id, stored.name, result, 'success');
         setUploadQueue(prev => prev.map(q => q.id === item.id ? { ...q, status: 'success', progress: 100 } : q));
         
         const cachedToken = getCachedAccessToken();
@@ -279,6 +268,7 @@ export default function App() {
         }
       } catch (error: any) {
         setUploadQueue(prev => prev.map(q => q.id === item.id ? { ...q, status: 'error', errorMsg: error.message || 'Error en conversión' } : q));
+        await historyStorage.saveConversion(item.id, item.name, '', 'error', error.message || 'Error en conversión');
       }
       
       await loadLocalData();
@@ -332,7 +322,7 @@ export default function App() {
         geminiApiKey
       );
       setConvertedMarkdown(result);
-      await historyStorage.saveConversion(currentFile.id, currentFile.name, result);
+      await historyStorage.saveConversion(currentFile.id, currentFile.name, result, 'success');
       showToast('Conversión finalizada con éxito.', 'success');
       loadLocalData();
 
@@ -342,6 +332,7 @@ export default function App() {
       }
     } catch (error: any) {
       showToast(error.message || 'Error en la conversión.', 'error');
+      await historyStorage.saveConversion(currentFile.id, currentFile.name, '', 'error', error.message || 'Error en conversión');
     } finally {
       setIsConverting(false);
     }
@@ -464,6 +455,10 @@ export default function App() {
 
   // Seleccionar archivo del historial
   const handleSelectHistoryItem = async (item: Conversion) => {
+    if (item.status === 'error') {
+      showToast(item.errorMsg || 'Este archivo falló en la conversión.', 'error');
+      return;
+    }
     setIsConverting(false);
     const file = await fileStorage.getFile(item.id);
     if (file) {
@@ -485,6 +480,53 @@ export default function App() {
     }
   };
 
+  // Descargar archivo original desde el historial
+  const handleDownloadOriginal = async (id: string, name: string) => {
+    const file = await fileStorage.getFile(id);
+    if (file) {
+      const url = URL.createObjectURL(file.blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = name;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      showToast(`Descargando archivo original: ${name}`, 'success');
+    } else {
+      showToast('El archivo original no se encuentra almacenado localmente.', 'error');
+    }
+  };
+
+  // Visualizar original en el Workspace
+  const handleViewOriginal = async (id: string) => {
+    const file = await fileStorage.getFile(id);
+    if (file) {
+      setCurrentFile(file);
+      const conv = historyList.find(h => h.id === id);
+      if (conv) {
+        setConvertedMarkdown(conv.texto_md_resultado);
+      }
+      setViewState('workspace');
+      setActiveWorkspaceTab('visor');
+    } else {
+      showToast('El archivo original no se encuentra almacenado localmente.', 'error');
+    }
+  };
+
+  // Abrir ventana flotante premium para visualizar Markdown en crudo UTF-8
+  const handleViewMarkdownModal = (name: string, text: string) => {
+    setSelectedMarkdownFileName(name);
+    setSelectedMarkdownText(text);
+  };
+
+  // Copiar texto al portapapeles
+  const handleCopyText = (text: string) => {
+    navigator.clipboard.writeText(text);
+    setIsCopied(true);
+    setTimeout(() => setIsCopied(false), 2000);
+  };
+
   // Ir a la pantalla de nuevo documento
   const handleNewDocument = () => {
     setCurrentFile(null);
@@ -499,7 +541,7 @@ export default function App() {
     setViewState('dashboard');
   };
 
-  // Descarga local
+  // Descarga local de markdown
   const handleDownload = () => {
     if (!currentFile || !convertedMarkdown) return;
     downloadMarkdown(currentFile.name, convertedMarkdown);
@@ -621,14 +663,14 @@ export default function App() {
         </div>
       )}
 
-      {/* Pantalla de carga animada con icono de Drive en color sólido */}
+      {/* Pantalla de carga animada con icono de Nube en color sólido */}
       {isSyncing && (
         <div className="fixed inset-0 bg-[#0F0F11]/90 backdrop-blur-xl z-[90] flex flex-col items-center justify-center">
           <div className="w-full max-w-md p-8 flex flex-col items-center text-center">
             <div className="relative mb-8">
               <div className="w-16 h-16 border-4 border-primary/20 border-t-primary rounded-full animate-spin"></div>
               <div className="absolute inset-0 m-auto flex items-center justify-center text-primary">
-                <GoogleDriveIcon size={26} />
+                <Cloud size={26} />
               </div>
             </div>
             <h3 className="text-xl font-bold text-white mb-2">Google Drive Sync</h3>
@@ -645,7 +687,7 @@ export default function App() {
         <aside className="flex flex-col h-screen fixed left-0 top-0 z-40 bg-surface-container dark:bg-surface-container-high border-r border-outline-variant w-[260px] shrink-0 font-sans">
           <div className="p-6 flex flex-col h-full">
             
-            {/* Logo recortado dinámicamente: Ocupa la mayor parte de la cuadrícula superior del Sidebar */}
+            {/* Logo recortado dinámicamente: Ocupa la mayor parte de la cuadrícula superior */}
             <div className="mb-8 cursor-pointer w-full flex justify-center items-center hover:scale-102 transition-transform duration-200" onClick={handleGoDashboard} title="Ir al Dashboard">
               <img 
                 src={logoSrc} 
@@ -680,11 +722,11 @@ export default function App() {
                 <span className="text-body-sm font-medium">Nuevo Documento</span>
               </button>
 
-              {/* Botón de Google Drive con opciones manuales de Backup e icono en color sólido */}
+              {/* Botón de Google Drive con opciones manuales de Backup e icono de Nube en color sólido */}
               {gdriveToken ? (
                 <div className="space-y-1.5 p-3 rounded-xl bg-white/5 border border-outline-variant/10">
                   <div className="flex items-center gap-2 mb-2 px-1 text-xs font-semibold text-white/80">
-                    <GoogleDriveIcon size={14} className="text-primary" />
+                    <Cloud size={14} className="text-primary" />
                     <span>Google Drive Activo</span>
                   </div>
                   
@@ -717,14 +759,13 @@ export default function App() {
                   onClick={handleConnectGoogleDrive}
                   className="w-full flex items-center gap-3 px-4 py-3 bg-white/5 border border-outline-variant/30 hover:bg-white/10 text-on-surface hover:text-white rounded-xl transition-all duration-200 group text-left"
                 >
-                  {/* Icono de Drive en color sólido monocromático */}
-                  <GoogleDriveIcon size={18} className="text-outline group-hover:text-primary transition-colors" />
+                  <Cloud size={18} className="text-outline group-hover:text-primary transition-colors" />
                   <span className="text-body-sm font-medium">Google Drive Backup</span>
                 </button>
               )}
             </div>
 
-            {/* Listado de Historial */}
+            {/* Listado de Historial en la barra lateral - MÁXIMO 5 CONVERSIONES */}
             <div className="flex-1 overflow-y-auto -mx-6 px-6 space-y-6">
               <div>
                 <h3 className="text-label-caps font-label-caps text-outline mb-3 px-2 flex items-center gap-2">
@@ -735,7 +776,7 @@ export default function App() {
                   <p className="text-[11px] text-outline italic px-2">No hay conversiones guardadas.</p>
                 ) : (
                   <div className="space-y-1">
-                    {historyList.map((item) => (
+                    {historyList.slice(0, 5).map((item) => (
                       <div 
                         key={item.id} 
                         onClick={() => handleSelectHistoryItem(item)}
@@ -860,7 +901,7 @@ export default function App() {
               </p>
             </div>
 
-            {/* Fila de Tarjetas de Estadísticas (Icono Drive Silueta) */}
+            {/* Fila de Tarjetas de Estadísticas (Icono Nube Silueta) */}
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
               {/* Card 1: Documentos Procesados */}
               <div className="glass-panel p-6 rounded-2xl flex flex-col justify-between hover:border-primary/30 transition-all duration-300 group">
@@ -904,11 +945,11 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Card 4: Sincronización en la Nube con Icono de Drive Silueta */}
+              {/* Card 4: Sincronización en la Nube con Icono de Nube Silueta */}
               <div className="glass-panel p-6 rounded-2xl flex flex-col justify-between hover:border-primary/30 transition-all duration-300 group min-w-0">
                 <div className="flex items-center justify-between text-outline mb-4">
                   <span className="text-xs font-semibold uppercase tracking-wider font-label-caps">Cloud Backup</span>
-                  <GoogleDriveIcon size={18} className={gdriveToken ? "text-green-400" : "text-outline"} />
+                  <Cloud size={18} className={gdriveToken ? "text-green-400 animate-pulse" : "text-outline"} />
                 </div>
                 <div className="min-w-0">
                   <h4 className={`text-lg sm:text-xl font-bold mb-1 truncate ${gdriveToken ? 'text-green-400' : 'text-outline'}`}>
@@ -921,78 +962,126 @@ export default function App() {
               </div>
             </div>
 
-            {/* Gran Botón de Acción Central (Bento style) */}
-            <div className="grid grid-cols-1 sm:grid-cols-12 gap-6 items-stretch">
-              <div 
-                onClick={handleNewDocument}
-                className="sm:col-span-8 glass-panel rounded-3xl p-6 sm:p-8 flex flex-col justify-between group cursor-pointer hover:bg-white/5 transition-all duration-300 hover:border-primary/40 relative overflow-hidden"
-              >
-                <div className="absolute top-0 right-0 w-64 h-64 bg-primary/5 rounded-full blur-3xl pointer-events-none group-hover:bg-primary/10 transition-colors"></div>
-                <div className="flex justify-between items-start mb-8 sm:mb-12 relative z-10">
-                  <div className="w-12 h-12 rounded-2xl bg-primary/10 flex items-center justify-center text-primary group-hover:scale-105 transition-transform">
-                    <Upload size={24} />
-                  </div>
-                  <span className="text-xs font-label-caps uppercase tracking-wider text-primary border border-primary/20 px-3 py-1 rounded-full bg-primary/5">
-                    Comenzar
-                  </span>
+            {/* Contenedor del Historial Completo (Reemplazando módulos Bento anteriores) */}
+            <div className="glass-panel rounded-3xl p-6 sm:p-8 flex flex-col space-y-6">
+              <div className="flex items-center justify-between border-b border-outline-variant/30 pb-4">
+                <div className="space-y-1">
+                  <h4 className="text-lg font-bold text-white">Historial Completo de Conversiones</h4>
+                  <p className="text-xs text-on-surface-variant">Administra, visualiza y descarga tus archivos procesados localmente.</p>
                 </div>
-                <div className="relative z-10">
-                  <h4 className="text-xl sm:text-2xl font-bold text-white mb-2 group-hover:text-primary transition-colors flex items-center gap-2">
-                    Iniciar Nueva Conversión
-                    <span className="material-symbols-outlined text-[20px] transform group-hover:translate-x-1 transition-transform">arrow_forward</span>
-                  </h4>
-                  <p className="text-on-surface-variant text-sm max-w-lg leading-relaxed">
-                    Sube archivos PDF, presupuestos, balances o imágenes para convertirlas a Markdown estructurado al instante.
-                  </p>
-                </div>
+                <button 
+                  onClick={handleNewDocument}
+                  className="px-4 h-9 rounded-xl bg-primary hover:bg-primary-container text-on-primary font-semibold text-xs transition-all active:scale-95 flex items-center gap-1.5 shadow-lg"
+                >
+                  <Plus size={14} />
+                  <span>Nuevo Documento</span>
+                </button>
               </div>
 
-              <div 
-                onClick={() => setIsSettingsOpen(true)}
-                className="sm:col-span-4 glass-panel rounded-3xl p-6 sm:p-8 flex flex-col justify-between group cursor-pointer hover:bg-white/5 transition-all duration-300 hover:border-primary/30 relative overflow-hidden"
-              >
-                <div className="flex justify-between items-start mb-8 sm:mb-12">
-                  <div className="w-12 h-12 rounded-2xl bg-white/5 flex items-center justify-center text-outline group-hover:scale-105 transition-transform">
-                    <Settings size={24} />
-                  </div>
+              {historyList.length === 0 ? (
+                <div className="py-12 text-center text-outline italic text-sm">
+                  No hay conversiones guardadas en el historial local. Sube un archivo para comenzar.
                 </div>
-                <div>
-                  <h4 className="text-lg font-bold text-white mb-1 group-hover:text-white/80 transition-colors">Ajustes de API</h4>
-                  <p className="text-xs text-on-surface-variant leading-relaxed">
-                    Introduce tu API Key de Gemini y Google Client ID para habilitar la transcripción y copias de seguridad.
-                  </p>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left border-collapse">
+                    <thead>
+                      <tr className="border-b border-outline-variant/20 text-[10px] uppercase tracking-wider font-label-caps text-outline">
+                        <th className="py-3 px-4 font-semibold">Documento</th>
+                        <th className="py-3 px-4 font-semibold">Fecha</th>
+                        <th className="py-3 px-4 font-semibold">Estado</th>
+                        <th className="py-3 px-4 font-semibold text-right">Acciones</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-outline-variant/10 text-sm">
+                      {historyList.map((item) => (
+                        <tr key={item.id} className="hover:bg-white/[0.02] transition-colors group">
+                          <td className="py-3.5 px-4 font-medium min-w-[200px]">
+                            {item.status === 'error' ? (
+                              <div className="flex items-center gap-2">
+                                <span className="text-red-400 font-semibold break-all">{item.nombre_archivo}</span>
+                                <button 
+                                  onClick={() => showToast(item.errorMsg || 'Error en conversión', 'error')}
+                                  className="p-1 bg-red-500/10 hover:bg-red-500/20 border border-red-500/20 text-red-400 rounded transition-colors"
+                                  title="Ver mensaje de error"
+                                >
+                                  <AlertCircle size={12} />
+                                </button>
+                              </div>
+                            ) : (
+                              <span className="text-green-400 font-semibold break-all">{item.nombre_archivo}</span>
+                            )}
+                          </td>
+                          <td className="py-3.5 px-4 text-outline text-xs whitespace-nowrap">
+                            {new Date(item.fecha_conversion).toLocaleString('es-ES', { 
+                              day: '2-digit', 
+                              month: '2-digit', 
+                              year: 'numeric',
+                              hour: '2-digit',
+                              minute: '2-digit'
+                            })}
+                          </td>
+                          <td className="py-3.5 px-4 whitespace-nowrap">
+                            {item.status === 'error' ? (
+                              <span className="text-[10px] uppercase font-bold tracking-wider font-label-caps text-red-400 bg-red-500/10 border border-red-500/20 px-2 py-0.5 rounded-md">Fallo</span>
+                            ) : (
+                              <span className="text-[10px] uppercase font-bold tracking-wider font-label-caps text-green-400 bg-green-500/10 border border-green-500/20 px-2 py-0.5 rounded-md">Éxito</span>
+                            )}
+                          </td>
+                          <td className="py-3.5 px-4 text-right whitespace-nowrap">
+                            <div className="flex items-center justify-end gap-2.5">
+                              {/* Descarga original */}
+                              <button 
+                                onClick={() => handleDownloadOriginal(item.id, item.nombre_archivo)}
+                                className="p-1.5 hover:bg-white/10 rounded-lg text-outline hover:text-white transition-colors"
+                                title="Descargar original"
+                              >
+                                <Download size={14} />
+                              </button>
+
+                              {/* Visualizar original en Workspace */}
+                              <button 
+                                onClick={() => handleViewOriginal(item.id)}
+                                className="p-1.5 hover:bg-white/10 rounded-lg text-outline hover:text-white transition-colors"
+                                title="Visualizar original"
+                              >
+                                <Eye size={14} />
+                              </button>
+
+                              {/* Visualizar md (Caja flotante premium) */}
+                              {item.status !== 'error' && (
+                                <button 
+                                  onClick={() => handleViewMarkdownModal(item.nombre_archivo, item.texto_md_resultado)}
+                                  className="p-1.5 hover:bg-white/10 rounded-lg text-outline hover:text-primary transition-colors"
+                                  title="Ver Markdown Convertido"
+                                >
+                                  <Code size={14} />
+                                </button>
+                              )}
+
+                              {/* Borrar */}
+                              <button 
+                                onClick={async () => {
+                                  if (confirm('¿Seguro que deseas eliminar esta conversión del historial?')) {
+                                    await historyStorage.deleteConversion(item.id);
+                                    await fileStorage.deleteFile(item.id);
+                                    loadLocalData();
+                                  }
+                                }}
+                                className="p-1.5 hover:bg-white/10 rounded-lg text-outline hover:text-red-400 transition-colors"
+                                title="Eliminar registro"
+                              >
+                                <span className="material-symbols-outlined text-[15px]">delete</span>
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
                 </div>
-              </div>
+              )}
             </div>
-
-            {/* Actividad Reciente */}
-            {historyList.length > 0 && (
-              <div className="mt-4">
-                <h4 className="text-xs font-bold font-label-caps uppercase tracking-widest text-outline mb-3 flex items-center gap-2">
-                  <Clock size={12} />
-                  <span>Últimos documentos procesados</span>
-                </h4>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                  {historyList.slice(0, 3).map((item) => (
-                    <div 
-                      key={item.id} 
-                      onClick={() => handleSelectHistoryItem(item)}
-                      className="glass-panel p-4 rounded-xl cursor-pointer hover:bg-white/5 hover:border-outline transition-all duration-200 flex items-center gap-3"
-                    >
-                      <div className="w-8 h-8 rounded-lg bg-surface-container flex items-center justify-center text-primary shrink-0">
-                        <FileText size={16} />
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <p className="text-xs font-semibold text-white truncate">{item.nombre_archivo}</p>
-                        <p className="text-[10px] text-outline mt-0.5">
-                          {new Date(item.fecha_conversion).toLocaleDateString('es-ES', { day: 'numeric', month: 'short' })}
-                        </p>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
           </main>
         )}
 
@@ -1008,7 +1097,6 @@ export default function App() {
 
             {/* Layout Bento de Carga */}
             <div className="grid grid-cols-1 sm:grid-cols-12 gap-6 w-full max-w-4xl">
-              {/* Area de carga */}
               <div 
                 onDragOver={handleDragOver}
                 onDrop={handleDrop}
@@ -1046,13 +1134,13 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Sincronización Google Drive y Privacidad */}
+              {/* Sincronización Google Drive (Icono Nube Silueta) y Privacidad */}
               <div className="col-span-1 sm:col-span-4 flex flex-col gap-6">
                 <div 
                   className="glass-panel flex-1 rounded-3xl p-5 flex flex-col items-center justify-center text-center hover:bg-white/5 transition-colors cursor-pointer group min-h-[140px]"
                 >
                   <div className="w-10 h-10 bg-white/5 rounded-full flex items-center justify-center mb-3 group-hover:bg-white/10 transition-all text-outline group-hover:text-primary">
-                    <GoogleDriveIcon size={20} />
+                    <Cloud size={20} />
                   </div>
                   <p className="text-xs font-bold text-white mb-1">Google Drive Backup</p>
                   
@@ -1399,7 +1487,7 @@ export default function App() {
               {historyList.length === 0 ? (
                 <p className="text-xs text-outline italic">No hay conversiones guardadas.</p>
               ) : (
-                historyList.map((item) => (
+                historyList.slice(0, 5).map((item) => (
                   <div 
                     key={item.id} 
                     onClick={() => {
@@ -1419,6 +1507,70 @@ export default function App() {
                   </div>
                 ))
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* VENTANA FLOTANTE PREMIUM PARA VISUALIZAR MARKDOWN (Raw Text UTF-8) */}
+      {selectedMarkdownText !== null && (
+        <div 
+          className="fixed inset-0 bg-[#0F0F11]/85 backdrop-blur-md z-[120] flex items-center justify-center p-4 sm:p-6 animate-fade-in"
+          onClick={() => setSelectedMarkdownText(null)}
+        >
+          <div 
+            className="w-full max-w-3xl h-[80vh] bg-surface-container-high/80 backdrop-blur-2xl border border-blue-500/50 shadow-[0_0_25px_rgba(59,130,246,0.25)] rounded-3xl p-6 flex flex-col relative"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Cabecera del visualizador */}
+            <div className="flex items-center justify-between border-b border-outline-variant/30 pb-4 mb-4 select-none">
+              <div className="flex items-center gap-2.5 min-w-0">
+                <FileText className="text-blue-400 shrink-0" size={20} />
+                <h3 className="text-base font-bold text-white truncate pr-4">{selectedMarkdownFileName}</h3>
+              </div>
+              
+              <div className="flex items-center gap-2 shrink-0">
+                {/* Botón copiar */}
+                <button 
+                  onClick={() => handleCopyText(selectedMarkdownText)}
+                  className={`p-2 rounded-xl border transition-all flex items-center gap-1.5 text-xs font-semibold ${
+                    isCopied 
+                      ? 'bg-green-500/10 border-green-500/20 text-green-400' 
+                      : 'bg-white/5 hover:bg-white/10 border-white/5 text-outline hover:text-white'
+                  }`}
+                  title="Copiar contenido"
+                >
+                  {isCopied ? <CheckCircle size={14} /> : <Copy size={14} />}
+                  <span>{isCopied ? 'Copiado' : 'Copiar'}</span>
+                </button>
+
+                {/* Botón descargar */}
+                <button 
+                  onClick={() => {
+                    downloadMarkdown(selectedMarkdownFileName, selectedMarkdownText);
+                    showToast('Archivo Markdown descargado con éxito.', 'success');
+                  }}
+                  className="p-2 bg-white/5 hover:bg-white/10 border border-white/5 text-outline hover:text-white rounded-xl transition-all flex items-center gap-1.5 text-xs font-semibold"
+                  title="Descargar archivo .md"
+                >
+                  <Download size={14} />
+                  <span>Descargar</span>
+                </button>
+
+                {/* Botón cerrar */}
+                <button 
+                  onClick={() => setSelectedMarkdownText(null)}
+                  className="p-2 bg-white/5 hover:bg-red-500/10 border border-white/5 hover:border-red-500/20 text-outline hover:text-red-400 rounded-xl transition-all"
+                  title="Cerrar visor"
+                >
+                  <X size={16} />
+                </button>
+              </div>
+            </div>
+
+            {/* Contenido en UTF-8 plano */}
+            <div className="flex-1 overflow-auto bg-black/40 border border-outline-variant/10 rounded-2xl p-5 font-mono text-sm leading-relaxed text-on-surface-variant select-text whitespace-pre-wrap">
+              {selectedMarkdownText || 'No hay contenido para mostrar.'}
             </div>
           </div>
         </div>
