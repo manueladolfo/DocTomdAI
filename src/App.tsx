@@ -569,6 +569,32 @@ export default function App() {
     setUploadQueue([]);
   };
 
+  // Reintentar procesar un elemento de la cola que ha fallado
+  const retryQueueItem = async (id: string) => {
+    const item = uploadQueue.find(q => q.id === id);
+    if (!item) return;
+
+    // Cambiar a pending para mostrar el estado correcto en la UI
+    setUploadQueue(prev => prev.map(q => q.id === id ? { ...q, status: 'pending', progress: 0, errorMsg: undefined } : q));
+
+    try {
+      const storedFile = await fileStorage.getFile(id);
+      if (!storedFile) {
+        throw new Error('Archivo original no encontrado en el almacenamiento local.');
+      }
+
+      const file = new File([storedFile.blob], storedFile.name, { type: storedFile.type });
+      const filesMap = new Map<string, File>([[id, file]]);
+
+      // Re-procesar la cola
+      await processQueue([{ ...item, status: 'pending', progress: 0, errorMsg: undefined }], filesMap);
+    } catch (error: any) {
+      setUploadQueue(prev => prev.map(q => q.id === id ? { ...q, status: 'error', errorMsg: error.message || 'Error en reintento' } : q));
+      await historyStorage.saveConversion(id, item.name, '', 'error', error.message || 'Error en reintento');
+      await loadLocalData();
+    }
+  };
+
   // Renderizar Markdown básico a HTML
   const renderMarkdownToHtml = (md: string) => {
     if (!md) return '<p class="text-on-surface-variant italic">No hay contenido convertido.</p>';
@@ -639,12 +665,15 @@ export default function App() {
     <div className="flex h-screen w-screen overflow-hidden bg-background text-on-surface">
       {/* Toast de error */}
       {errorMsg && (
-        <div className="fixed top-6 left-1/2 -translate-x-1/2 z-[100] w-auto max-w-md toast-entrance">
-          <div className="bg-red-500/90 backdrop-blur-xl border border-white/10 px-4 py-3 rounded-xl shadow-2xl flex items-center gap-3">
-            <AlertCircle className="text-white shrink-0" size={20} />
-            <p className="text-white text-sm font-medium">{errorMsg}</p>
-            <button onClick={() => setErrorMsg(null)} className="ml-2 hover:bg-white/10 p-1 rounded-lg transition-colors">
-              <span className="material-symbols-outlined text-[18px] text-white">close</span>
+        <div className="fixed top-6 left-1/2 -translate-x-1/2 z-[100] w-[90vw] max-w-lg toast-entrance">
+          <div className="bg-red-500/95 backdrop-blur-xl border border-white/10 px-4 py-3 rounded-xl shadow-2xl flex items-start gap-3 max-h-[85vh] overflow-y-auto">
+            <AlertCircle className="text-white shrink-0 mt-0.5" size={20} />
+            <div className="flex-1 min-w-0">
+              <p className="text-white text-[10px] uppercase font-bold tracking-wider mb-1 opacity-75 font-label-caps">Error</p>
+              <p className="text-white text-xs font-medium leading-relaxed break-words whitespace-pre-wrap">{errorMsg}</p>
+            </div>
+            <button onClick={() => setErrorMsg(null)} className="ml-2 hover:bg-white/10 p-1.5 rounded-lg transition-colors shrink-0 cursor-pointer">
+              <span className="material-symbols-outlined text-[18px] text-white block">close</span>
             </button>
           </div>
         </div>
@@ -1252,12 +1281,32 @@ export default function App() {
                         )}
                         {item.status === 'error' && (
                           <div className="flex flex-col items-end gap-1">
-                            <div className="flex items-center gap-1.5 text-red-400 bg-red-500/10 border border-red-500/20 px-2.5 py-1 rounded-lg">
-                              <AlertTriangle size={14} />
-                              <span className="text-[10px] font-semibold">Error</span>
+                            <div className="flex items-center gap-2">
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  retryQueueItem(item.id);
+                                }}
+                                className="flex items-center gap-1 text-[10px] font-semibold text-primary hover:text-white bg-primary/10 border border-primary/20 hover:bg-primary/30 transition-all px-2.5 py-1 rounded-lg cursor-pointer"
+                                title="Reintentar procesamiento"
+                              >
+                                <RefreshCw size={10} className="hover:rotate-180 transition-transform duration-500" />
+                                <span>Reintentar</span>
+                              </button>
+                              <div className="flex items-center gap-1.5 text-red-400 bg-red-500/10 border border-red-500/20 px-2.5 py-1 rounded-lg">
+                                <AlertTriangle size={14} />
+                                <span className="text-[10px] font-semibold">Error</span>
+                              </div>
                             </div>
                             {item.errorMsg && (
-                              <p className="text-[9px] text-red-300 max-w-[180px] text-right truncate" title={item.errorMsg}>
+                              <p 
+                                className="text-[9px] text-red-300 max-w-[180px] text-right truncate cursor-pointer hover:underline" 
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  showToast(item.errorMsg || 'Error en conversión', 'error');
+                                }}
+                                title="Click para ver error completo"
+                              >
                                 {item.errorMsg}
                               </p>
                             )}

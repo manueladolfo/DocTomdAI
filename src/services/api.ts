@@ -54,89 +54,103 @@ export const convertDocumentToMarkdown = async (
   const availableModels = await fetchAvailableModels(apiKey);
   console.log('Modelos disponibles detectados para esta clave:', availableModels);
 
-  // Intentar seleccionar el mejor modelo Flash disponible que admita imágenes/PDFs
-  let model = 'gemini-3.5-flash';
+  // Lista de modelos preferidos ordenada por prioridad de calidad y soporte multimodal
   const preferredModels = [
     'gemini-3.5-flash',
     'gemini-3.1-flash-image',
-    'gemini-3.1-flash-lite',
+    'gemini-2.5-flash',
     'gemini-2.0-flash',
+    'gemini-3.1-flash-lite',
     'gemini-1.5-flash'
   ];
 
-  for (const pref of preferredModels) {
-    if (availableModels.includes(pref)) {
-      model = pref;
-      break;
+  // Filtrar modelos preferidos que realmente estén disponibles para esta API Key
+  const candidateModels = preferredModels.filter(pref => availableModels.includes(pref));
+
+  // Si no se detectó ningún modelo de nuestra lista, usar un fallback razonable
+  if (candidateModels.length === 0) {
+    const fallbackFlash = availableModels.find(m => m.includes('flash'));
+    if (fallbackFlash) {
+      candidateModels.push(fallbackFlash);
+    } else if (availableModels.length > 0) {
+      candidateModels.push(availableModels[0]);
+    } else {
+      candidateModels.push('gemini-2.0-flash');
     }
   }
 
-  console.log(`Modelo seleccionado para transcripción: ${model}`);
-  
-  // Intentar de forma secuencial la versión de API estable v1 y luego v1beta
-  const apiVersions = ['v1', 'v1beta'];
+  console.log('Modelos candidatos a intentar de forma secuencial:', candidateModels);
+
   let lastError: any = null;
 
-  for (const apiVersion of apiVersions) {
-    const url = `https://generativelanguage.googleapis.com/${apiVersion}/models/${model}:generateContent?key=${apiKey}`;
+  for (const candidateModel of candidateModels) {
+    console.log(`Intentando transcripción con el modelo: ${candidateModel}`);
+    
+    // Intentar de forma secuencial la versión de API estable v1 y luego v1beta
+    const apiVersions = ['v1', 'v1beta'];
 
-    const requestBody = {
-      contents: [
-        {
+    for (const apiVersion of apiVersions) {
+      const url = `https://generativelanguage.googleapis.com/${apiVersion}/models/${candidateModel}:generateContent?key=${apiKey}`;
+
+      const requestBody = {
+        contents: [
+          {
+            parts: [
+              {
+                inlineData: {
+                  mimeType: fileMimeType,
+                  data: base64Data
+                }
+              }
+            ]
+          }
+        ],
+        systemInstruction: {
           parts: [
             {
-              inlineData: {
-                mimeType: fileMimeType,
-                data: base64Data
-              }
+              text: systemPrompt
             }
           ]
-        }
-      ],
-      systemInstruction: {
-        parts: [
-          {
-            text: systemPrompt
-          }
-        ]
-      },
-      generationConfig: {
-        temperature: 0.1, // Baja temperatura para preservar datos exactos
-        topP: 0.95
-      }
-    };
-
-    try {
-      const response = await fetch(url, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
         },
-        body: JSON.stringify(requestBody)
-      });
+        generationConfig: {
+          temperature: 0.1, // Baja temperatura para preservar datos exactos
+          topP: 0.95
+        }
+      };
 
-      if (!response.ok) {
-        const errData = await response.json().catch(() => ({}));
-        const errMsg = errData.error?.message || `Error HTTP ${response.status}`;
-        throw new Error(errMsg);
+      try {
+        const response = await fetch(url, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify(requestBody)
+        });
+
+        if (!response.ok) {
+          const errData = await response.json().catch(() => ({}));
+          const errMsg = errData.error?.message || `Error HTTP ${response.status}`;
+          throw new Error(errMsg);
+        }
+
+        const resJson = await response.json();
+        
+        // Validar y extraer el texto de la respuesta de Gemini
+        const textResult = resJson.candidates?.[0]?.content?.parts?.[0]?.text;
+        if (!textResult) {
+          throw new Error('La respuesta de la IA no contenía texto estructurado.');
+        }
+
+        console.log(`Transcripción exitosa usando el modelo: ${candidateModel} (${apiVersion})`);
+        return textResult;
+      } catch (error: any) {
+        console.warn(`Fallo al invocar la API de Gemini usando el modelo ${candidateModel} versión ${apiVersion}:`, error.message);
+        lastError = error;
       }
-
-      const resJson = await response.json();
-      
-      // Validar y extraer el texto de la respuesta de Gemini
-      const textResult = resJson.candidates?.[0]?.content?.parts?.[0]?.text;
-      if (!textResult) {
-        throw new Error('La respuesta de la IA no contenía texto estructurado.');
-      }
-
-      return textResult;
-    } catch (error: any) {
-      console.warn(`Fallo al invocar la API de Gemini usando la versión ${apiVersion}:`, error.message);
-      lastError = error;
     }
   }
 
-  // Si fallan ambos intentos, arrojar un error descriptivo con la lista de modelos detectados
+  // Si fallan todos los intentos, arrojar un error descriptivo con la lista de modelos detectados
   const modelListStr = availableModels.length > 0 ? availableModels.join(', ') : 'Ninguno detectado';
   throw new Error(`Error en la extracción por IA: ${lastError?.message || 'Error desconocido'}. [Modelos disponibles para tu clave: ${modelListStr}]`);
 };
