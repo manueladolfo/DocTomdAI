@@ -7,7 +7,6 @@ import {
   History, 
   Settings, 
   LogOut, 
-  ArrowLeft, 
   ZoomIn, 
   ZoomOut, 
   Download, 
@@ -21,7 +20,10 @@ import {
   Loader2,
   Clock,
   HardDrive,
-  Plus
+  Plus,
+  Home,
+  X,
+  AlertTriangle
 } from 'lucide-react';
 import { useFileStorage, type StoredFile } from './hooks/useFileStorage';
 import { useConversionHistory, type Conversion } from './hooks/useConversionHistory';
@@ -34,6 +36,15 @@ import {
   getCachedAccessToken, 
   disconnectGoogleDrive 
 } from './services/googleDrive';
+
+interface QueueItem {
+  id: string;
+  name: string;
+  type: string;
+  progress: number;
+  status: 'pending' | 'processing' | 'success' | 'error';
+  errorMsg?: string;
+}
 
 export default function App() {
   const fileStorage = useFileStorage();
@@ -64,8 +75,26 @@ export default function App() {
   // Estado del panel de Ajustes
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
 
+  // Cola de procesamiento por lotes
+  const [uploadQueue, setUploadQueue] = useState<QueueItem[]>([]);
+
+  // Adaptabilidad Mobile
+  const [isMobile, setIsMobile] = useState(false);
+  const [isHistoryDrawerOpen, setIsHistoryDrawerOpen] = useState(false);
+  const [activeWorkspaceTab, setActiveWorkspaceTab] = useState<'visor' | 'markdown'>('visor');
+
   // Referencias para arrastrar y soltar
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Detectar tamaño de pantalla para la vista móvil
+  useEffect(() => {
+    const handleResize = () => {
+      setIsMobile(window.innerWidth < 768);
+    };
+    handleResize();
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
 
   // Cargar datos iniciales
   useEffect(() => {
@@ -92,29 +121,92 @@ export default function App() {
     setFilesList(storedFiles);
   };
 
+  // Manejar selección de múltiples archivos
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const selectedFiles = e.target.files;
     if (selectedFiles && selectedFiles.length > 0) {
-      await processUploadedFile(selectedFiles[0]);
+      await processMultipleFiles(Array.from(selectedFiles));
     }
   };
 
-  const processUploadedFile = async (file: File) => {
-    if (file.type !== 'application/pdf' && !file.type.startsWith('image/')) {
+  // Procesar arrastre de múltiples archivos
+  const handleDrop = async (e: React.DragEvent) => {
+    e.preventDefault();
+    const droppedFiles = e.dataTransfer.files;
+    if (droppedFiles && droppedFiles.length > 0) {
+      await processMultipleFiles(Array.from(droppedFiles));
+    }
+  };
+
+  const processMultipleFiles = async (files: File[]) => {
+    const validFiles = files.filter(f => f.type === 'application/pdf' || f.type.startsWith('image/'));
+    if (validFiles.length === 0) {
       showToast('Error: Solo se admiten archivos PDF o imágenes.', 'error');
       return;
     }
 
-    try {
-      const id = crypto.randomUUID();
-      const stored = await fileStorage.storeFile(id, file.name, file, file.type);
-      setCurrentFile(stored);
-      setConvertedMarkdown('');
-      setViewState('workspace');
-      showToast(`Archivo "${file.name}" cargado localmente.`, 'success');
-      loadLocalData();
-    } catch (error) {
-      showToast('Error al almacenar el archivo localmente.', 'error');
+    // 1. Crear elementos de cola
+    const newItems: QueueItem[] = validFiles.map(file => ({
+      id: crypto.randomUUID(),
+      name: file.name,
+      type: file.type,
+      progress: 0,
+      status: 'pending'
+    }));
+
+    const filesMap = new Map<string, File>();
+    newItems.forEach((item, index) => {
+      filesMap.set(item.id, validFiles[index]);
+    });
+
+    // Añadir a la cola visible
+    setUploadQueue(prev => [...newItems, ...prev]);
+    
+    // Iniciar procesamiento secuencial de la cola
+    processQueue(newItems, filesMap);
+  };
+
+  // Procesar cola en segundo plano (Secuencial para evitar límites de API de Gemini)
+  const processQueue = async (itemsToProcess: QueueItem[], filesMap: Map<string, File>) => {
+    for (const item of itemsToProcess) {
+      setUploadQueue(prev => prev.map(q => q.id === item.id ? { ...q, status: 'processing', progress: 15 } : q));
+      
+      const file = filesMap.get(item.id);
+      if (!file) continue;
+
+      try {
+        // Almacenar localmente en IndexedDB
+        setUploadQueue(prev => prev.map(q => q.id === item.id ? { ...q, progress: 40 } : q));
+        const stored = await fileStorage.storeFile(item.id, file.name, file, file.type);
+        
+        await loadLocalData();
+
+        if (!geminiApiKey) {
+          throw new Error('API Key de Gemini no configurada');
+        }
+
+        // Llamar a la API de Gemini
+        setUploadQueue(prev => prev.map(q => q.id === item.id ? { ...q, progress: 70 } : q));
+        const result = await convertDocumentToMarkdown(stored.blob, stored.type, geminiApiKey);
+        
+        setUploadQueue(prev => prev.map(q => q.id === item.id ? { ...q, progress: 90 } : q));
+        
+        // Guardar conversión en historial
+        await historyStorage.saveConversion(stored.id, stored.name, result);
+        
+        // Marcar éxito
+        setUploadQueue(prev => prev.map(q => q.id === item.id ? { ...q, status: 'success', progress: 100 } : q));
+        
+        // Sincronizar automáticamente con Google Drive
+        const cachedToken = getCachedAccessToken();
+        if (cachedToken) {
+          triggerAutoSync(cachedToken);
+        }
+      } catch (error: any) {
+        setUploadQueue(prev => prev.map(q => q.id === item.id ? { ...q, status: 'error', errorMsg: error.message || 'Error en conversión' } : q));
+      }
+      
+      await loadLocalData();
     }
   };
 
@@ -122,17 +214,8 @@ export default function App() {
     fileInputRef.current?.click();
   };
 
-  // Drag and drop handlers
   const handleDragOver = (e: React.DragEvent) => {
     e.preventDefault();
-  };
-
-  const handleDrop = async (e: React.DragEvent) => {
-    e.preventDefault();
-    const droppedFiles = e.dataTransfer.files;
-    if (droppedFiles && droppedFiles.length > 0) {
-      await processUploadedFile(droppedFiles[0]);
-    }
   };
 
   // Guardar configuración de Ajustes
@@ -156,7 +239,7 @@ export default function App() {
     }
   };
 
-  // Convertir documento con Gemini
+  // Convertir documento actual individualmente desde el Workspace
   const handleConvert = async () => {
     if (!currentFile) return;
     if (!geminiApiKey) {
@@ -174,14 +257,10 @@ export default function App() {
         geminiApiKey
       );
       setConvertedMarkdown(result);
-      
-      // Guardar en el historial local
       await historyStorage.saveConversion(currentFile.id, currentFile.name, result);
-      
       showToast('Conversión finalizada con éxito.', 'success');
       loadLocalData();
 
-      // Sincronizar automáticamente con Google Drive si está conectado
       const cachedToken = getCachedAccessToken();
       if (cachedToken) {
         triggerAutoSync(cachedToken);
@@ -219,7 +298,6 @@ export default function App() {
       const token = await authenticateGoogleDrive();
       setGdriveToken(token);
 
-      // Sincronización bidireccional inicial: descargar historial y archivos existentes
       setSyncStatus('Conectando y descargando copias de seguridad de Google Drive...');
       const { history, files } = await syncFromGoogleDrive(token, (status) => setSyncStatus(status));
       
@@ -233,7 +311,6 @@ export default function App() {
         await loadLocalData();
         showToast('¡Datos de Google Drive restaurados con éxito!', 'success');
       } else {
-        // Si no hay datos en la nube, subimos los locales actuales
         setSyncStatus('Subiendo datos actuales locales para crear respaldo...');
         await syncToGoogleDrive(token, historyList, filesList, (status) => setSyncStatus(status));
       }
@@ -334,6 +411,11 @@ export default function App() {
       return `${(size / 1024).toFixed(1)} KB`;
     }
     return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+  };
+
+  // Limpiar cola de subidas completadas/erróneas
+  const clearUploadQueue = () => {
+    setUploadQueue([]);
   };
 
   // Renderizar Markdown básico a HTML para previsualización
@@ -447,169 +529,194 @@ export default function App() {
         </div>
       )}
 
-      {/* Sidebar lateral */}
-      <aside className="flex flex-col h-screen fixed left-0 top-0 z-40 bg-surface-container dark:bg-surface-container-high border-r border-outline-variant w-[260px] shrink-0">
-        <div className="p-6 flex flex-col h-full">
-          {/* Logo ocupando gran parte de arriba a la izquierda sin textos adicionales */}
-          <div className="mb-8 cursor-pointer px-2 flex justify-center" onClick={handleGoDashboard}>
-            <img src="/logo.png" alt="Logo de DocToMarkdown" className="w-full max-h-14 object-contain" />
-          </div>
+      {/* Sidebar lateral (Oculto en Móvil) */}
+      {!isMobile && (
+        <aside className="flex flex-col h-screen fixed left-0 top-0 z-40 bg-surface-container dark:bg-surface-container-high border-r border-outline-variant w-[260px] shrink-0">
+          <div className="p-6 flex flex-col h-full">
+            {/* Logo 4 veces más grande y con fondo transparente usando mix-blend-screen */}
+            <div className="mb-8 cursor-pointer px-2 flex justify-center hover:scale-102 transition-transform" onClick={handleGoDashboard} title="Ir al Dashboard">
+              <img 
+                src="/logo.png" 
+                alt="Logo de DocToMarkdown" 
+                className="w-full max-h-24 object-contain mix-blend-screen"
+              />
+            </div>
 
-          {/* Botones de control rápido */}
-          <div className="space-y-2 mb-6">
-            <button 
-              onClick={handleNewDocument}
-              className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200 ${
-                viewState === 'import' 
-                  ? 'bg-primary-container text-on-primary-container font-semibold shadow-lg shadow-primary/10' 
-                  : 'bg-white/5 hover:bg-white/10 text-on-surface-variant hover:text-on-surface'
-              }`}
-            >
-              <Plus size={18} />
-              <span className="text-body-sm font-medium">Nuevo Documento</span>
-            </button>
-
-            {gdriveToken ? (
-              <div className="space-y-1">
-                <button 
-                  onClick={handleManualSync}
-                  className="w-full flex items-center justify-between px-4 py-2.5 bg-green-500/10 hover:bg-green-500/20 border border-green-500/20 text-green-400 rounded-xl transition-all duration-200"
-                >
-                  <div className="flex items-center gap-3">
-                    <RefreshCw size={14} className="animate-spin-slow" />
-                    <span className="text-body-sm font-medium">Sincronizado</span>
-                  </div>
-                  <span className="text-[9px] bg-green-500/20 text-green-400 px-1.5 py-0.5 rounded font-label-caps uppercase">Nube</span>
-                </button>
-                <button 
-                  onClick={handleDisconnectGoogleDrive}
-                  className="w-full flex items-center gap-3 px-4 py-2 text-on-surface-variant hover:text-red-400 rounded-xl transition-all duration-200 text-left text-xs"
-                >
-                  <LogOut size={12} />
-                  <span>Desconectar Drive</span>
-                </button>
-              </div>
-            ) : (
+            {/* Botones de control rápido */}
+            <div className="space-y-2 mb-6">
               <button 
-                onClick={handleConnectGoogleDrive}
-                className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-surface border border-outline-variant hover:bg-surface-variant rounded-xl transition-all duration-200 group"
+                onClick={handleGoDashboard}
+                className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200 ${
+                  viewState === 'dashboard' 
+                    ? 'bg-primary-container text-on-primary-container font-semibold shadow-lg shadow-primary/10' 
+                    : 'bg-white/5 hover:bg-white/10 text-on-surface-variant hover:text-on-surface'
+                }`}
               >
-                <Cloud className="text-primary group-hover:scale-110 transition-transform" size={18} />
-                <span className="text-body-sm font-medium">Google Drive Backup</span>
+                <Home size={18} />
+                <span className="text-body-sm font-medium">Inicio</span>
               </button>
-            )}
-          </div>
 
-          {/* Listado de Historial */}
-          <div className="flex-1 overflow-y-auto -mx-6 px-6 space-y-6">
-            <div>
-              <h3 className="text-label-caps font-label-caps text-outline mb-3 px-2 flex items-center gap-2">
-                <History size={12} />
-                <span>Historial Reciente</span>
-              </h3>
-              {historyList.length === 0 ? (
-                <p className="text-[11px] text-outline italic px-2">No hay conversiones guardadas.</p>
-              ) : (
+              <button 
+                onClick={handleNewDocument}
+                className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200 ${
+                  viewState === 'import' 
+                    ? 'bg-primary-container text-on-primary-container font-semibold shadow-lg shadow-primary/10' 
+                    : 'bg-white/5 hover:bg-white/10 text-on-surface-variant hover:text-on-surface'
+                }`}
+              >
+                <Plus size={18} />
+                <span className="text-body-sm font-medium">Nuevo Documento</span>
+              </button>
+
+              {gdriveToken ? (
                 <div className="space-y-1">
-                  {historyList.map((item) => (
-                    <div 
-                      key={item.id} 
-                      onClick={() => handleSelectHistoryItem(item)}
-                      className={`group flex items-center justify-between px-3 py-2.5 rounded-lg cursor-pointer transition-all duration-150 ${
-                        currentFile?.id === item.id && viewState === 'workspace'
-                          ? 'bg-primary/10 text-primary border-l-2 border-primary' 
-                          : 'text-on-surface-variant hover:bg-white/5 hover:text-on-surface'
-                      }`}
-                    >
-                      <div className="flex items-center gap-2 min-w-0 flex-1">
-                        <FileText size={14} className="shrink-0" />
-                        <span className="text-body-sm truncate">{item.nombre_archivo}</span>
-                      </div>
-                      <button 
-                        onClick={async (e) => {
-                          e.stopPropagation();
-                          if (confirm('¿Seguro que deseas eliminar esta conversión del historial?')) {
-                            await historyStorage.deleteConversion(item.id);
-                            await fileStorage.deleteFile(item.id);
-                            if (currentFile?.id === item.id) {
-                              handleGoDashboard();
-                            }
-                            loadLocalData();
-                          }
-                        }}
-                        className="opacity-0 group-hover:opacity-100 p-1 hover:bg-white/10 rounded text-outline hover:text-red-400 transition-all"
-                      >
-                        <span className="material-symbols-outlined text-[14px]">delete</span>
-                      </button>
+                  <button 
+                    onClick={handleManualSync}
+                    className="w-full flex items-center justify-between px-4 py-2.5 bg-green-500/10 hover:bg-green-500/20 border border-green-500/20 text-green-400 rounded-xl transition-all duration-200"
+                  >
+                    <div className="flex items-center gap-3">
+                      <RefreshCw size={14} className="animate-spin-slow" />
+                      <span className="text-body-sm font-medium">Sincronizado</span>
                     </div>
-                  ))}
+                    <span className="text-[9px] bg-green-500/20 text-green-400 px-1.5 py-0.5 rounded font-label-caps uppercase">Nube</span>
+                  </button>
+                  <button 
+                    onClick={handleDisconnectGoogleDrive}
+                    className="w-full flex items-center gap-3 px-4 py-2 text-on-surface-variant hover:text-red-400 rounded-xl transition-all duration-200 text-left text-xs"
+                  >
+                    <LogOut size={12} />
+                    <span>Desconectar Drive</span>
+                  </button>
                 </div>
+              ) : (
+                <button 
+                  onClick={handleConnectGoogleDrive}
+                  className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-surface border border-outline-variant hover:bg-surface-variant rounded-xl transition-all duration-200 group"
+                >
+                  <Cloud className="text-primary group-hover:scale-110 transition-transform" size={18} />
+                  <span className="text-body-sm font-medium">Google Drive Backup</span>
+                </button>
               )}
             </div>
-          </div>
 
-          {/* Ajustes */}
-          <div className="mt-auto pt-4 border-t border-outline-variant/30 space-y-1">
-            <button 
-              onClick={() => setIsSettingsOpen(true)}
-              className="w-full flex items-center gap-3 px-4 py-2.5 text-on-surface-variant hover:bg-white/5 hover:text-on-surface rounded-xl transition-all"
-            >
-              <Settings size={16} />
-              <span className="text-body-sm">Ajustes de API</span>
-            </button>
-          </div>
-        </div>
-      </aside>
+            {/* Listado de Historial */}
+            <div className="flex-1 overflow-y-auto -mx-6 px-6 space-y-6">
+              <div>
+                <h3 className="text-label-caps font-label-caps text-outline mb-3 px-2 flex items-center gap-2">
+                  <History size={12} />
+                  <span>Historial Reciente</span>
+                </h3>
+                {historyList.length === 0 ? (
+                  <p className="text-[11px] text-outline italic px-2">No hay conversiones guardadas.</p>
+                ) : (
+                  <div className="space-y-1">
+                    {historyList.map((item) => (
+                      <div 
+                        key={item.id} 
+                        onClick={() => handleSelectHistoryItem(item)}
+                        className={`group flex items-center justify-between px-3 py-2.5 rounded-lg cursor-pointer transition-all duration-150 ${
+                          currentFile?.id === item.id && viewState === 'workspace'
+                            ? 'bg-primary/10 text-primary border-l-2 border-primary' 
+                            : 'text-on-surface-variant hover:bg-white/5 hover:text-on-surface'
+                        }`}
+                      >
+                        <div className="flex items-center gap-2 min-w-0 flex-1">
+                          <FileText size={14} className="shrink-0" />
+                          <span className="text-body-sm truncate">{item.nombre_archivo}</span>
+                        </div>
+                        <button 
+                          onClick={async (e) => {
+                            e.stopPropagation();
+                            if (confirm('¿Seguro que deseas eliminar esta conversión del historial?')) {
+                              await historyStorage.deleteConversion(item.id);
+                              await fileStorage.deleteFile(item.id);
+                              if (currentFile?.id === item.id) {
+                                handleGoDashboard();
+                              }
+                              loadLocalData();
+                            }
+                          }}
+                          className="opacity-0 group-hover:opacity-100 p-1 hover:bg-white/10 rounded text-outline hover:text-red-400 transition-all"
+                        >
+                          <span className="material-symbols-outlined text-[14px]">delete</span>
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
 
-      {/* Workspace principal */}
-      <div className="flex-1 flex flex-col ml-[260px] h-screen overflow-hidden">
+            {/* Ajustes */}
+            <div className="mt-auto pt-4 border-t border-outline-variant/30 space-y-1">
+              <button 
+                onClick={() => setIsSettingsOpen(true)}
+                className="w-full flex items-center gap-3 px-4 py-2.5 text-on-surface-variant hover:bg-white/5 hover:text-on-surface rounded-xl transition-all"
+              >
+                <Settings size={16} />
+                <span className="text-body-sm">Ajustes de API</span>
+              </button>
+            </div>
+          </div>
+        </aside>
+      )}
+
+      {/* Workspace principal (Con margen izquierdo adaptado a si es mobile o desktop) */}
+      <div className={`flex-1 flex flex-col ${isMobile ? 'ml-0' : 'ml-[260px]'} h-screen overflow-hidden pb-${isMobile ? '16' : '0'}`}>
         {/* Header superior */}
-        <header className="h-16 flex items-center justify-between px-8 bg-surface-container-low border-b border-outline-variant z-35 shrink-0">
-          <div className="flex items-center gap-3">
+        <header className="h-16 flex items-center justify-between px-6 bg-surface-container-low border-b border-outline-variant z-35 shrink-0">
+          <div className="flex items-center gap-3 min-w-0">
             {viewState !== 'dashboard' && (
-              <button onClick={handleGoDashboard} className="p-1.5 hover:bg-white/10 rounded-lg transition-colors text-outline hover:text-white mr-2">
-                <ArrowLeft size={16} />
+              <button onClick={handleGoDashboard} className="p-1.5 hover:bg-white/10 rounded-lg transition-colors text-outline hover:text-white mr-1" title="Volver al Inicio">
+                <Home size={16} />
               </button>
             )}
-            <FileText className="text-primary shrink-0" size={18} />
-            <h2 className="text-body-md font-medium text-white truncate max-w-md">
+            {isMobile && (
+              <div className="w-8 h-8 rounded-lg overflow-hidden shrink-0 flex items-center justify-center bg-white/5 mr-1">
+                <img src="/logo.png" alt="Logo" className="w-full h-full object-contain mix-blend-screen" />
+              </div>
+            )}
+            <FileText className="text-primary shrink-0 hidden sm:block" size={18} />
+            <h2 className="text-body-md font-medium text-white truncate max-w-[180px] sm:max-w-md">
               {viewState === 'dashboard' && 'Dashboard Principal'}
-              {viewState === 'import' && 'Nuevo Documento / Importar'}
+              {viewState === 'import' && 'Importar Archivos'}
               {viewState === 'workspace' && currentFile && currentFile.name}
             </h2>
           </div>
           
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2">
             {viewState === 'workspace' && currentFile && (
               <>
                 <button 
                   onClick={handleConvert}
                   disabled={isConverting}
-                  className="px-4 h-9 rounded-lg bg-primary hover:bg-primary-container text-on-primary font-semibold text-xs transition-all active:scale-95 flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="px-3 sm:px-4 h-9 rounded-lg bg-primary hover:bg-primary-container text-on-primary font-semibold text-xs transition-all active:scale-95 flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   {isConverting ? (
                     <>
                       <Loader2 size={12} className="animate-spin" />
-                      <span>Extrayendo...</span>
+                      <span className="hidden sm:inline">Extrayendo...</span>
                     </>
                   ) : (
                     <>
                       <RefreshCw size={12} />
-                      <span>Convertir con Gemini</span>
+                      <span className="hidden sm:inline">Convertir con Gemini</span>
+                      <span className="sm:hidden">Convertir</span>
                     </>
                   )}
                 </button>
                 <button 
                   onClick={handleDownload}
                   disabled={!convertedMarkdown}
-                  className={`px-4 h-9 rounded-lg font-semibold text-xs transition-all active:scale-95 flex items-center gap-2 shadow-lg ${
+                  className={`px-3 sm:px-4 h-9 rounded-lg font-semibold text-xs transition-all active:scale-95 flex items-center gap-1.5 shadow-lg ${
                     convertedMarkdown 
                       ? 'bg-white/5 hover:bg-white/10 text-white border border-outline-variant' 
                       : 'bg-white/5 text-outline cursor-not-allowed opacity-50'
                   }`}
                 >
                   <Download size={12} />
-                  <span>Descargar .md</span>
+                  <span className="hidden sm:inline">Descargar .md</span>
+                  <span className="sm:hidden">Descargar</span>
                 </button>
               </>
             )}
@@ -619,17 +726,17 @@ export default function App() {
         {/* Zona de contenido dinámico */}
         {viewState === 'dashboard' && (
           /* NUEVO DASHBOARD PREMIUM ANIMADO */
-          <main className="flex-1 p-10 overflow-y-auto bg-background flex flex-col justify-between">
+          <main className="flex-1 p-6 sm:p-10 overflow-y-auto bg-background flex flex-col justify-between space-y-8 pb-24 sm:pb-10">
             {/* Cabecera del Dashboard */}
-            <div className="space-y-2 mt-4 animate-fade-in">
-              <h3 className="text-3xl font-bold text-white tracking-tight">Bienvenido a DocToMarkdown</h3>
+            <div className="space-y-2 mt-2 animate-fade-in">
+              <h3 className="text-2xl sm:text-3xl font-bold text-white tracking-tight">Bienvenido a DocToMarkdown</h3>
               <p className="text-on-surface-variant text-sm max-w-2xl">
                 Tu centro local de transcripción y maquetación de archivos. Convierte PDFs y capturas a Markdown de forma privada e instantánea.
               </p>
             </div>
 
-            {/* Fila de Tarjetas de Estadísticas Animadas */}
-            <div className="grid grid-cols-4 gap-6 my-8">
+            {/* Fila de Tarjetas de Estadísticas Animadas (Responsive Grid) */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 my-4">
               {/* Card 1: Documentos Procesados */}
               <div className="glass-panel p-6 rounded-2xl flex flex-col justify-between hover:border-primary/30 transition-all duration-300 group">
                 <div className="flex items-center justify-between text-outline mb-4">
@@ -637,7 +744,7 @@ export default function App() {
                   <FileText className="text-primary group-hover:scale-110 transition-transform" size={18} />
                 </div>
                 <div>
-                  <h4 className="text-4xl font-extrabold text-white mb-1 animate-pulse-slow">
+                  <h4 className="text-3xl sm:text-4xl font-extrabold text-white mb-1 animate-pulse-slow">
                     {historyList.length}
                   </h4>
                   <p className="text-[11px] text-on-surface-variant">Archivos en base de datos local</p>
@@ -651,7 +758,7 @@ export default function App() {
                   <Clock className="text-amber-400 group-hover:rotate-12 transition-transform" size={18} />
                 </div>
                 <div>
-                  <h4 className="text-4xl font-extrabold text-white mb-1">
+                  <h4 className="text-3xl sm:text-4xl font-extrabold text-white mb-1">
                     {(historyList.length * 2.5).toFixed(0)} min
                   </h4>
                   <p className="text-[11px] text-on-surface-variant">Estimado a 2.5 min por doc</p>
@@ -665,38 +772,38 @@ export default function App() {
                   <HardDrive className="text-blue-400 group-hover:scale-110 transition-transform" size={18} />
                 </div>
                 <div>
-                  <h4 className="text-4xl font-extrabold text-white mb-1">
+                  <h4 className="text-3xl sm:text-4xl font-extrabold text-white mb-1">
                     {calculateStorageSize()}
                   </h4>
                   <p className="text-[11px] text-on-surface-variant">Caché IndexedDB utilizada</p>
                 </div>
               </div>
 
-              {/* Card 4: Sincronización en la Nube */}
-              <div className="glass-panel p-6 rounded-2xl flex flex-col justify-between hover:border-primary/30 transition-all duration-300 group">
+              {/* Card 4: Sincronización en la Nube (Solucionado Descuadrado) */}
+              <div className="glass-panel p-6 rounded-2xl flex flex-col justify-between hover:border-primary/30 transition-all duration-300 group min-w-0">
                 <div className="flex items-center justify-between text-outline mb-4">
                   <span className="text-xs font-semibold uppercase tracking-wider font-label-caps">Cloud Backup</span>
                   <Cloud className={gdriveToken ? "text-green-400 animate-pulse" : "text-outline"} size={18} />
                 </div>
-                <div>
-                  <h4 className={`text-xl font-bold mb-1 ${gdriveToken ? 'text-green-400' : 'text-outline'}`}>
+                <div className="min-w-0">
+                  <h4 className={`text-lg sm:text-xl font-bold mb-1 truncate ${gdriveToken ? 'text-green-400' : 'text-outline'}`}>
                     {gdriveToken ? 'Sincronizado' : 'Desconectado'}
                   </h4>
-                  <p className="text-[11px] text-on-surface-variant">
-                    {gdriveToken ? 'Respaldo activo en Google Drive' : 'Vincular Google Drive en Ajustes'}
+                  <p className="text-[11px] text-on-surface-variant truncate">
+                    {gdriveToken ? 'Respaldo activo en Drive' : 'Vincular cuenta en Ajustes'}
                   </p>
                 </div>
               </div>
             </div>
 
             {/* Gran Botón de Acción Central (Bento style) */}
-            <div className="grid grid-cols-12 gap-6 items-stretch mb-4">
+            <div className="grid grid-cols-1 sm:grid-cols-12 gap-6 items-stretch my-2">
               <div 
                 onClick={handleNewDocument}
-                className="col-span-8 glass-panel rounded-3xl p-8 flex flex-col justify-between group cursor-pointer hover:bg-white/5 transition-all duration-300 hover:border-primary/40 relative overflow-hidden"
+                className="sm:col-span-8 glass-panel rounded-3xl p-6 sm:p-8 flex flex-col justify-between group cursor-pointer hover:bg-white/5 transition-all duration-300 hover:border-primary/40 relative overflow-hidden"
               >
                 <div className="absolute top-0 right-0 w-64 h-64 bg-primary/5 rounded-full blur-3xl pointer-events-none group-hover:bg-primary/10 transition-colors"></div>
-                <div className="flex justify-between items-start mb-12 relative z-10">
+                <div className="flex justify-between items-start mb-8 sm:mb-12 relative z-10">
                   <div className="w-12 h-12 rounded-2xl bg-primary/10 flex items-center justify-center text-primary group-hover:scale-105 transition-transform">
                     <Upload size={24} />
                   </div>
@@ -705,21 +812,21 @@ export default function App() {
                   </span>
                 </div>
                 <div className="relative z-10">
-                  <h4 className="text-2xl font-bold text-white mb-2 group-hover:text-primary transition-colors flex items-center gap-2">
+                  <h4 className="text-xl sm:text-2xl font-bold text-white mb-2 group-hover:text-primary transition-colors flex items-center gap-2">
                     Iniciar Nueva Conversión
                     <span className="material-symbols-outlined text-[20px] transform group-hover:translate-x-1 transition-transform">arrow_forward</span>
                   </h4>
                   <p className="text-on-surface-variant text-sm max-w-lg leading-relaxed">
-                    Sube un nuevo PDF, presupuesto, balance de sumas y saldos, o una captura para convertirla a Markdown estructurado al instante.
+                    Sube archivos PDF, presupuestos, balances o imágenes para convertirlas a Markdown estructurado al instante.
                   </p>
                 </div>
               </div>
 
               <div 
                 onClick={() => setIsSettingsOpen(true)}
-                className="col-span-4 glass-panel rounded-3xl p-8 flex flex-col justify-between group cursor-pointer hover:bg-white/5 transition-all duration-300 hover:border-primary/30 relative overflow-hidden"
+                className="sm:col-span-4 glass-panel rounded-3xl p-6 sm:p-8 flex flex-col justify-between group cursor-pointer hover:bg-white/5 transition-all duration-300 hover:border-primary/30 relative overflow-hidden"
               >
-                <div className="flex justify-between items-start mb-12">
+                <div className="flex justify-between items-start mb-8 sm:mb-12">
                   <div className="w-12 h-12 rounded-2xl bg-white/5 flex items-center justify-center text-outline group-hover:scale-105 transition-transform">
                     <Settings size={24} />
                   </div>
@@ -727,7 +834,7 @@ export default function App() {
                 <div>
                   <h4 className="text-lg font-bold text-white mb-1 group-hover:text-white/80 transition-colors">Ajustes de API</h4>
                   <p className="text-xs text-on-surface-variant leading-relaxed">
-                    Introduce tu API Key de Gemini y Google Client ID para habilitar la transcripción automática y los respaldos.
+                    Introduce tu API Key de Gemini y Google Client ID para habilitar la transcripción y copias de seguridad.
                   </p>
                 </div>
               </div>
@@ -740,14 +847,14 @@ export default function App() {
                   <Clock size={12} />
                   <span>Últimos documentos procesados</span>
                 </h4>
-                <div className="grid grid-cols-3 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                   {historyList.slice(0, 3).map((item) => (
                     <div 
                       key={item.id} 
                       onClick={() => handleSelectHistoryItem(item)}
                       className="glass-panel p-4 rounded-xl cursor-pointer hover:bg-white/5 hover:border-outline transition-all duration-200 flex items-center gap-3"
                     >
-                      <div className="w-8 h-8 rounded-lg bg-surface-container flex items-center justify-center text-primary">
+                      <div className="w-8 h-8 rounded-lg bg-surface-container flex items-center justify-center text-primary shrink-0">
                         <FileText size={16} />
                       </div>
                       <div className="min-w-0 flex-1">
@@ -765,60 +872,63 @@ export default function App() {
         )}
 
         {viewState === 'import' && (
-          /* PANTALLA DE CARGA DE NUEVO DOCUMENTO (DROPZONE ANTERIOR) */
-          <main className="flex-1 p-8 overflow-y-auto flex flex-col items-center justify-center relative bg-background">
-            <div className="w-full max-w-4xl text-center mb-10">
-              <h3 className="text-3xl font-bold text-white mb-2 leading-tight">Carga tu documento</h3>
+          /* PANTALLA DE CARGA DE NUEVO DOCUMENTO (CON SOPORTE MULTI-ARCHIVO Y COLA) */
+          <main className="flex-1 p-6 sm:p-8 overflow-y-auto flex flex-col items-center justify-start bg-background space-y-8 pb-24 sm:pb-8">
+            <div className="w-full max-w-4xl text-center mt-4 space-y-2">
+              <h3 className="text-2xl sm:text-3xl font-bold text-white leading-tight">Carga tus documentos</h3>
               <p className="text-on-surface-variant text-sm">
-                Arrastra y suelta tus archivos para iniciar la conversión con la API de Gemini.
+                Puedes seleccionar o arrastrar **varios archivos a la vez** (PDFs o imágenes) para procesarlos por lotes.
               </p>
             </div>
 
             {/* Layout Bento de Carga */}
-            <div className="grid grid-cols-12 gap-6 w-full max-w-4xl h-[400px]">
+            <div className="grid grid-cols-1 sm:grid-cols-12 gap-6 w-full max-w-4xl">
+              {/* Area de carga */}
               <div 
                 onDragOver={handleDragOver}
                 onDrop={handleDrop}
                 onClick={triggerFileBrowser}
-                className="col-span-8 glass-panel rounded-3xl flex flex-col items-center justify-center p-8 relative transition-all duration-300 group cursor-pointer hover:border-primary/40 hover:bg-white/5"
+                className="col-span-1 sm:col-span-8 glass-panel rounded-3xl flex flex-col items-center justify-center p-8 relative transition-all duration-300 group cursor-pointer hover:border-primary/40 hover:bg-white/5 min-h-[250px]"
               >
                 <div className="absolute inset-4 border border-dashed border-outline-variant/30 rounded-2xl pointer-events-none group-hover:border-primary/40 transition-colors"></div>
                 <div className="relative z-10 flex flex-col items-center text-center gap-4">
-                  <div className="flex items-center -space-x-4 mb-2">
-                    <div className="w-14 h-14 bg-surface-container-highest rounded-xl flex items-center justify-center shadow-lg border border-white/5 transform -rotate-6 transition-transform group-hover:-rotate-12">
-                      <FileText size={28} className="text-red-400" />
+                  <div className="flex items-center -space-x-4 mb-1">
+                    <div className="w-12 h-12 bg-surface-container-highest rounded-xl flex items-center justify-center shadow-lg border border-white/5 transform -rotate-6">
+                      <FileText size={24} className="text-red-400" />
                     </div>
-                    <div className="w-16 h-16 bg-surface-container-highest rounded-xl flex items-center justify-center shadow-2xl border border-white/10 z-20 transition-transform group-hover:scale-105">
-                      <Upload size={32} className="text-primary" />
+                    <div className="w-14 h-14 bg-surface-container-highest rounded-xl flex items-center justify-center shadow-2xl border border-white/10 z-20 transition-transform group-hover:scale-105">
+                      <Upload size={28} className="text-primary" />
                     </div>
-                    <div className="w-14 h-14 bg-surface-container-highest rounded-xl flex items-center justify-center shadow-lg border border-white/5 transform rotate-6 transition-transform group-hover:rotate-12">
-                      <ImageIcon size={28} className="text-amber-400" />
+                    <div className="w-12 h-12 bg-surface-container-highest rounded-xl flex items-center justify-center shadow-lg border border-white/5 transform rotate-6">
+                      <ImageIcon size={24} className="text-amber-400" />
                     </div>
                   </div>
                   <div className="space-y-1">
-                    <p className="text-lg font-bold text-white">Arrastrar y soltar archivo aquí</p>
+                    <p className="text-base sm:text-lg font-bold text-white">Arrastrar y soltar múltiples archivos aquí</p>
                     <p className="text-xs text-on-surface-variant">Soporta PDFs e imágenes (.png, .jpg, .webp)</p>
                   </div>
-                  <button className="mt-2 px-6 h-10 rounded-full bg-primary hover:bg-primary-container text-on-primary font-semibold text-xs hover:scale-102 transition-transform active:scale-98 shadow-md">
-                    Explorar archivos localmente
+                  <button className="mt-1 px-5 h-9 rounded-full bg-primary hover:bg-primary-container text-on-primary font-semibold text-xs hover:scale-102 transition-transform shadow-md">
+                    Explorar archivos
                   </button>
                   <input 
                     type="file" 
                     ref={fileInputRef} 
                     onChange={handleFileSelect} 
                     className="hidden" 
+                    multiple
                     accept="application/pdf,image/*" 
                   />
                 </div>
               </div>
 
-              <div className="col-span-4 flex flex-col gap-6">
+              {/* Botón rápido Google Drive y privacidad */}
+              <div className="col-span-1 sm:col-span-4 flex flex-col gap-6">
                 <div 
                   onClick={gdriveToken ? handleManualSync : handleConnectGoogleDrive}
-                  className="glass-panel flex-1 rounded-3xl p-6 flex flex-col items-center justify-center text-center hover:bg-white/5 transition-colors cursor-pointer group"
+                  className="glass-panel flex-1 rounded-3xl p-5 flex flex-col items-center justify-center text-center hover:bg-white/5 transition-colors cursor-pointer group min-h-[140px]"
                 >
-                  <div className="w-12 h-12 bg-white/5 rounded-full flex items-center justify-center mb-4 group-hover:bg-white/10 transition-all">
-                    <svg className="w-6 h-6" viewBox="0 0 24 24">
+                  <div className="w-10 h-10 bg-white/5 rounded-full flex items-center justify-center mb-3 group-hover:bg-white/10 transition-all">
+                    <svg className="w-5 h-5" viewBox="0 0 24 24">
                       <path d="M15.445 15.1l3.505-6.09h-3.505z" fill="#4285F4"></path>
                       <path d="M10.315 15.45l3.505 6.09h-3.505z" fill="#34A853"></path>
                       <path d="M6.81 15.1l3.505-6.09H3.305z" fill="#FBBC04"></path>
@@ -827,48 +937,144 @@ export default function App() {
                       <path d="M10.315 9.36L3.505 21.1h6.81l6.81-11.74z" fill="#F9AB00"></path>
                     </svg>
                   </div>
-                  <p className="text-sm font-bold text-white mb-1">Google Drive</p>
-                  <p className="text-[11px] text-on-surface-variant mb-4 px-2 leading-snug">
-                    {gdriveToken ? 'Respaldo activo en tu nube.' : 'Sincroniza y respalda en tu nube de Google.'}
+                  <p className="text-xs font-bold text-white mb-0.5">Google Drive Sync</p>
+                  <p className="text-[10px] text-on-surface-variant mb-3 leading-snug">
+                    {gdriveToken ? 'Respaldo activo en tu nube.' : 'Sincroniza y respalda en la nube.'}
                   </p>
-                  <button className="w-full py-2 rounded-lg bg-white/5 border border-white/10 text-white font-medium text-xs hover:bg-white/10 transition-colors">
+                  <button className="w-full py-1.5 rounded-lg bg-white/5 border border-white/10 text-white font-medium text-[10px] hover:bg-white/10 transition-colors">
                     {gdriveToken ? 'Sincronizar ahora' : 'Vincular cuenta'}
                   </button>
                 </div>
 
-                <div className="glass-panel flex-1 rounded-3xl p-6 flex flex-col justify-between relative overflow-hidden bg-gradient-to-br from-primary/5 to-transparent">
+                <div className="glass-panel flex-1 rounded-3xl p-5 flex flex-col justify-between relative overflow-hidden bg-gradient-to-br from-primary/5 to-transparent min-h-[120px]">
                   <div className="flex items-start justify-between">
-                    <CheckCircle className="text-primary" size={24} />
-                    <span className="text-[9px] uppercase font-bold text-primary/60 tracking-wider font-label-caps">Privacidad</span>
+                    <CheckCircle className="text-primary" size={20} />
+                    <span className="text-[9px] uppercase font-bold text-primary/60 tracking-wider font-label-caps">Privado</span>
                   </div>
                   <div>
-                    <p className="text-sm font-bold text-white mb-1 leading-snug">Almacenamiento Local</p>
-                    <p className="text-[11px] text-on-surface-variant leading-relaxed">
-                      Tus archivos binarios se almacenan localmente en IndexedDB. No se transfieren a bases de datos de terceros.
+                    <p className="text-xs font-bold text-white mb-0.5">Almacenamiento Local</p>
+                    <p className="text-[10px] text-on-surface-variant leading-relaxed">
+                      Tus archivos se guardan en IndexedDB localmente, sin intermediarios.
                     </p>
                   </div>
                 </div>
               </div>
             </div>
 
-            <div className="mt-8 flex items-center gap-6 opacity-60 text-xs text-outline">
+            {/* Listado de Cola de Procesamiento por Lotes */}
+            {uploadQueue.length > 0 && (
+              <div className="w-full max-w-4xl glass-panel rounded-3xl p-6 space-y-4 animate-fade-in">
+                <div className="flex items-center justify-between border-b border-outline-variant/30 pb-3">
+                  <h4 className="text-sm font-bold text-white flex items-center gap-2">
+                    <Loader2 size={16} className={uploadQueue.some(q => q.status === 'processing') ? 'animate-spin text-primary' : 'text-outline'} />
+                    <span>Cola de Procesamiento ({uploadQueue.filter(q => q.status === 'success').length}/{uploadQueue.length})</span>
+                  </h4>
+                  <button 
+                    onClick={clearUploadQueue} 
+                    className="text-xs text-outline hover:text-white flex items-center gap-1 px-3 py-1 bg-white/5 rounded-lg border border-white/5 hover:bg-white/10 transition-colors"
+                  >
+                    <X size={12} />
+                    <span>Limpiar Cola</span>
+                  </button>
+                </div>
+
+                <div className="space-y-2.5 max-h-[300px] overflow-y-auto pr-1">
+                  {uploadQueue.map(item => (
+                    <div key={item.id} className="p-3.5 rounded-xl bg-white/5 border border-outline-variant/10 flex flex-col sm:flex-row sm:items-center justify-between gap-3 transition-all duration-200">
+                      <div className="flex items-center gap-3 min-w-0 flex-1">
+                        <FileText className="text-primary shrink-0" size={18} />
+                        <div className="min-w-0 flex-1">
+                          <p className="text-xs font-semibold text-white truncate">{item.name}</p>
+                          <p className="text-[10px] text-outline mt-0.5">
+                            {item.type === 'application/pdf' ? 'Documento PDF' : 'Imagen'}
+                          </p>
+                        </div>
+                      </div>
+
+                      {/* Estado y Barra de Progreso */}
+                      <div className="flex items-center gap-4 shrink-0">
+                        {item.status === 'pending' && (
+                          <span className="text-[10px] font-semibold text-outline bg-white/5 px-2 py-1 rounded">En espera</span>
+                        )}
+                        {item.status === 'processing' && (
+                          <div className="flex items-center gap-3">
+                            <div className="w-24 h-1.5 bg-white/10 rounded-full overflow-hidden">
+                              <div className="h-full bg-primary rounded-full transition-all duration-300" style={{ width: `${item.progress}%` }}></div>
+                            </div>
+                            <span className="text-[10px] font-semibold text-primary font-mono">{item.progress}%</span>
+                          </div>
+                        )}
+                        {item.status === 'success' && (
+                          <div className="flex items-center gap-1.5 text-green-400 bg-green-500/10 border border-green-500/20 px-2.5 py-1 rounded-lg">
+                            <CheckCircle size={14} />
+                            <span className="text-[10px] font-semibold">Convertido</span>
+                          </div>
+                        )}
+                        {item.status === 'error' && (
+                          <div className="flex flex-col items-end gap-1">
+                            <div className="flex items-center gap-1.5 text-red-400 bg-red-500/10 border border-red-500/20 px-2.5 py-1 rounded-lg">
+                              <AlertTriangle size={14} />
+                              <span className="text-[10px] font-semibold">Error</span>
+                            </div>
+                            {item.errorMsg && (
+                              <p className="text-[9px] text-red-300 max-w-[180px] text-right truncate" title={item.errorMsg}>
+                                {item.errorMsg}
+                              </p>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Footer */}
+            <div className="flex items-center gap-6 opacity-60 text-xs text-outline">
               <span className="flex items-center gap-1">
                 <span className="material-symbols-outlined text-[14px]">lock</span>
                 Datos cifrados en cliente
               </span>
               <span className="flex items-center gap-1">
                 <span className="material-symbols-outlined text-[14px]">bolt</span>
-                Extracción OCR ultrarrápida
+                Extracción OCR por lotes
               </span>
             </div>
           </main>
         )}
 
         {viewState === 'workspace' && currentFile && (
-          /* WORKSPACE DE 3 COLUMNAS */
-          <div className="flex-1 flex overflow-hidden">
-            {/* Columna 2: Visor de Documento */}
-            <section className="flex-1 flex flex-col min-w-0 border-r border-outline-variant bg-[#0F0F11]">
+          /* WORKSPACE DE 3 COLUMNAS ADAPTADO A MÓVIL Y ESCRITORIO */
+          <div className="flex-1 flex flex-col md:flex-row overflow-hidden pb-16 sm:pb-0">
+            {/* Control de pestañas superior exclusivo para versión Móvil */}
+            {isMobile && (
+              <div className="flex bg-surface-container border-b border-outline-variant shrink-0 z-30">
+                <button 
+                  onClick={() => setActiveWorkspaceTab('visor')}
+                  className={`flex-1 py-3 text-xs font-semibold text-center border-b-2 transition-colors ${
+                    activeWorkspaceTab === 'visor' 
+                      ? 'border-primary text-primary bg-white/2' 
+                      : 'border-transparent text-outline hover:text-white'
+                  }`}
+                >
+                  Visualizar Origen
+                </button>
+                <button 
+                  onClick={() => setActiveWorkspaceTab('markdown')}
+                  className={`flex-1 py-3 text-xs font-semibold text-center border-b-2 transition-colors ${
+                    activeWorkspaceTab === 'markdown' 
+                      ? 'border-primary text-primary bg-white/2' 
+                      : 'border-transparent text-outline hover:text-white'
+                  }`}
+                >
+                  Markdown / Editor
+                </button>
+              </div>
+            )}
+
+            {/* Columna 2: Visor de Documento (Oculto en móvil si la pestaña activa no es 'visor') */}
+            <section className={`flex-1 flex flex-col min-w-0 border-r border-outline-variant bg-[#0F0F11] ${isMobile && activeWorkspaceTab !== 'visor' ? 'hidden' : 'flex'}`}>
               <header className="h-10 flex items-center justify-between px-4 bg-surface-container/60 shrink-0 select-none">
                 <span className="text-[11px] font-medium text-outline uppercase tracking-wider font-label-caps">Visor de Origen</span>
                 <div className="flex items-center gap-2 bg-surface p-0.5 rounded border border-outline-variant/30">
@@ -888,7 +1094,7 @@ export default function App() {
                 </div>
               </header>
 
-              <div className="flex-1 overflow-auto p-6 flex justify-center items-start">
+              <div className="flex-1 overflow-auto p-4 sm:p-6 flex justify-center items-start">
                 <div 
                   style={{ transform: `scale(${zoomLevel / 100})`, transformOrigin: 'top center' }}
                   className="w-full max-w-[680px] bg-white rounded-xl shadow-2xl overflow-hidden transition-transform duration-200"
@@ -919,8 +1125,8 @@ export default function App() {
               </div>
             </section>
 
-            {/* Columna 3: Editor y Previsualización Markdown */}
-            <section className="w-[520px] flex flex-col shrink-0 bg-surface">
+            {/* Columna 3: Editor y Previsualización Markdown (Oculto en móvil si la pestaña activa no es 'markdown') */}
+            <section className={`w-full md:w-[520px] flex flex-col shrink-0 bg-surface ${isMobile && activeWorkspaceTab !== 'markdown' ? 'hidden' : 'flex'}`}>
               <header className="h-10 flex items-center justify-between px-4 bg-surface-container-high/60 shrink-0 border-b border-outline-variant">
                 <div className="flex items-center gap-1 h-full">
                   <button 
@@ -946,7 +1152,7 @@ export default function App() {
                 </div>
               </header>
 
-              <div className="flex-1 overflow-y-auto p-6">
+              <div className="flex-1 overflow-y-auto p-5 sm:p-6">
                 {isConverting ? (
                   <div className="space-y-6 skeleton-item">
                     <div className="w-1/3 h-5 bg-surface-container-highest rounded"></div>
@@ -967,7 +1173,7 @@ export default function App() {
                     value={convertedMarkdown}
                     onChange={(e) => setConvertedMarkdown(e.target.value)}
                     placeholder="Haz clic en 'Convertir con Gemini' para iniciar el procesamiento OCR del documento..."
-                    className="w-full h-full min-h-[400px] bg-transparent border-none text-on-surface-variant font-mono text-sm leading-relaxed p-0 focus:ring-0 focus:outline-none resize-none"
+                    className="w-full h-full min-h-[350px] bg-transparent border-none text-on-surface-variant font-mono text-sm leading-relaxed p-0 focus:ring-0 focus:outline-none resize-none"
                   />
                 ) : (
                   <div 
@@ -981,11 +1187,11 @@ export default function App() {
               <footer className="h-8 bg-surface-container border-t border-outline-variant px-4 flex items-center justify-between text-[9px] uppercase tracking-wider font-label-caps text-outline shrink-0">
                 <div className="flex items-center gap-2">
                   <div className={`w-1.5 h-1.5 rounded-full ${isConverting ? 'bg-primary animate-pulse' : convertedMarkdown ? 'bg-green-500' : 'bg-outline'}`}></div>
-                  <span>{isConverting ? 'Procesando OCR...' : convertedMarkdown ? 'Listo' : 'Esperando conversión'}</span>
+                  <span>{isConverting ? 'Procesando...' : convertedMarkdown ? 'Listo' : 'Esperando conversión'}</span>
                 </div>
                 <div className="flex items-center gap-3">
                   <span>UTF-8</span>
-                  {gdriveToken && <span>Copia de seguridad en la nube</span>}
+                  {gdriveToken && <span className="hidden sm:inline">Nube Activa</span>}
                 </div>
               </footer>
             </section>
@@ -993,9 +1199,99 @@ export default function App() {
         )}
       </div>
 
+      {/* Menú de navegación inferior exclusivo para Vista Mobile */}
+      {isMobile && (
+        <div className="fixed bottom-0 left-0 right-0 h-16 bg-surface-container/90 backdrop-blur-md border-t border-outline-variant/30 flex items-center justify-around z-45 px-4 shadow-2xl">
+          <button 
+            onClick={handleGoDashboard} 
+            className={`flex flex-col items-center justify-center gap-1 text-[10px] font-semibold transition-colors w-16 h-full ${
+              viewState === 'dashboard' ? 'text-primary' : 'text-outline hover:text-white'
+            }`}
+          >
+            <Home size={18} />
+            <span>Inicio</span>
+          </button>
+          
+          <button 
+            onClick={handleNewDocument} 
+            className={`flex flex-col items-center justify-center gap-1 text-[10px] font-semibold transition-colors w-16 h-full ${
+              viewState === 'import' ? 'text-primary' : 'text-outline hover:text-white'
+            }`}
+          >
+            <Plus size={18} />
+            <span>Nuevo</span>
+          </button>
+
+          <button 
+            onClick={() => setIsHistoryDrawerOpen(true)} 
+            className="flex flex-col items-center justify-center gap-1 text-[10px] font-semibold text-outline hover:text-white w-16 h-full"
+          >
+            <History size={18} />
+            <span>Historial</span>
+          </button>
+
+          <button 
+            onClick={() => setIsSettingsOpen(true)} 
+            className="flex flex-col items-center justify-center gap-1 text-[10px] font-semibold text-outline hover:text-white w-16 h-full"
+          >
+            <Settings size={18} />
+            <span>Ajustes</span>
+          </button>
+        </div>
+      )}
+
+      {/* Cajón (Drawer) de Historial en Vista Mobile */}
+      {isMobile && isHistoryDrawerOpen && (
+        <div 
+          className="fixed inset-0 bg-black/70 backdrop-blur-sm z-[100] flex justify-end animate-fade-in" 
+          onClick={() => setIsHistoryDrawerOpen(false)}
+        >
+          <div 
+            className="w-[280px] bg-surface-container-high h-full p-6 flex flex-col shadow-2xl border-l border-outline-variant/20" 
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between mb-6 pb-3 border-b border-outline-variant/30">
+              <h3 className="text-xs font-bold text-white uppercase tracking-wider flex items-center gap-2 font-label-caps">
+                <History size={16} />
+                <span>Historial Reciente</span>
+              </h3>
+              <button onClick={() => setIsHistoryDrawerOpen(false)} className="p-1 hover:bg-white/10 rounded text-white transition-colors">
+                <X size={18} />
+              </button>
+            </div>
+            
+            <div className="flex-1 overflow-y-auto space-y-1 pr-1">
+              {historyList.length === 0 ? (
+                <p className="text-xs text-outline italic">No hay conversiones guardadas.</p>
+              ) : (
+                historyList.map((item) => (
+                  <div 
+                    key={item.id} 
+                    onClick={() => {
+                      handleSelectHistoryItem(item);
+                      setIsHistoryDrawerOpen(false);
+                    }}
+                    className={`flex items-center justify-between px-3 py-2.5 rounded-lg cursor-pointer transition-all ${
+                      currentFile?.id === item.id && viewState === 'workspace'
+                        ? 'bg-primary/10 text-primary border-l-2 border-primary' 
+                        : 'text-on-surface-variant hover:bg-white/5 hover:text-on-surface'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2 min-w-0 flex-1">
+                      <FileText size={14} className="shrink-0" />
+                      <span className="text-xs truncate">{item.nombre_archivo}</span>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* MODAL DE AJUSTES PREMIUM */}
       {isSettingsOpen && (
-        <div className="fixed inset-0 bg-[#0F0F11]/80 backdrop-blur-md z-50 flex items-center justify-center">
+        <div className="fixed inset-0 bg-[#0F0F11]/80 backdrop-blur-md z-50 flex items-center justify-center p-4">
           <div className="w-full max-w-md bg-surface-container-high border border-outline-variant/30 rounded-3xl p-6 shadow-2xl modal-entrance">
             <div className="flex items-center gap-2.5 mb-6">
               <Settings className="text-primary" size={22} />
