@@ -54,14 +54,14 @@ export const convertDocumentToMarkdown = async (
   const availableModels = await fetchAvailableModels(apiKey);
   console.log('Modelos disponibles detectados para esta clave:', availableModels);
 
-  // Intentar seleccionar el mejor modelo Flash disponible, con fallback a gemini-1.5-flash
-  let model = 'gemini-1.5-flash';
+  // Intentar seleccionar el mejor modelo Flash disponible que admita imágenes/PDFs
+  let model = 'gemini-3.5-flash';
   const preferredModels = [
-    'gemini-2.5-flash',
+    'gemini-3.5-flash',
+    'gemini-3.1-flash-image',
+    'gemini-3.1-flash-lite',
     'gemini-2.0-flash',
-    'gemini-1.5-flash-latest',
-    'gemini-1.5-flash',
-    'gemini-1.5-pro'
+    'gemini-1.5-flash'
   ];
 
   for (const pref of preferredModels) {
