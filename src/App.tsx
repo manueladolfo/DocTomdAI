@@ -849,7 +849,7 @@ export default function App() {
       {/* MODAL DE AJUSTES PREMIUM */}
       {isSettingsOpen && (
         <div className="fixed inset-0 bg-[#0F0F11]/80 backdrop-blur-md z-50 flex items-center justify-center">
-          <div className="w-full max-w-md bg-surface-container-high border border-outline-variant/30 rounded-3xl p-6 shadow-2xl toast-entrance">
+          <div className="w-full max-w-md bg-surface-container-high border border-outline-variant/30 rounded-3xl p-6 shadow-2xl modal-entrance">
             <div className="flex items-center gap-2.5 mb-6">
               <Settings className="text-primary" size={22} />
               <h3 className="text-lg font-bold text-white">Configuración del Sistema</h3>
