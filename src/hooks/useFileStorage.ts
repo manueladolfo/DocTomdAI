@@ -8,6 +8,15 @@ export interface StoredFile {
   uploadedAt: string;
 }
 
+// Estructura interna de almacenamiento para IndexedDB que evita bugs en WebKit/Safari iOS
+interface DBStoredFile {
+  id: string;
+  name: string;
+  arrayBuffer: ArrayBuffer;
+  type: string;
+  uploadedAt: string;
+}
+
 // Crear instancia dedicada de localForage para archivos de origen
 const fileStore = localforage.createInstance({
   name: 'DocToMarkdown',
@@ -16,21 +25,48 @@ const fileStore = localforage.createInstance({
 
 export const useFileStorage = () => {
   const storeFile = async (id: string, name: string, blob: Blob, type: string): Promise<StoredFile> => {
-    const storedFile: StoredFile = {
+    const arrayBuffer = await blob.arrayBuffer();
+    const uploadedAt = new Date().toISOString();
+    const dbStoredFile: DBStoredFile = {
+      id,
+      name,
+      arrayBuffer,
+      type,
+      uploadedAt
+    };
+    await fileStore.setItem(id, dbStoredFile);
+    
+    return {
       id,
       name,
       blob,
       type,
-      uploadedAt: new Date().toISOString()
+      uploadedAt
     };
-    await fileStore.setItem(id, storedFile);
-    return storedFile;
   };
 
   const getFile = async (id: string): Promise<StoredFile | null> => {
     try {
-      const file = await fileStore.getItem<StoredFile>(id);
-      return file;
+      const data = await fileStore.getItem<any>(id);
+      if (!data) return null;
+
+      // Retrocompatibilidad: Si el archivo ya existía con el formato antiguo de Blob nativo
+      let blob: Blob;
+      if (data.arrayBuffer) {
+        blob = new Blob([data.arrayBuffer], { type: data.type });
+      } else if (data.blob) {
+        blob = data.blob;
+      } else {
+        return null;
+      }
+
+      return {
+        id: data.id,
+        name: data.name,
+        blob,
+        type: data.type,
+        uploadedAt: data.uploadedAt
+      };
     } catch (error) {
       console.error('Error al obtener el archivo de IndexedDB:', error);
       return null;
@@ -48,8 +84,23 @@ export const useFileStorage = () => {
   const listStoredFiles = async (): Promise<StoredFile[]> => {
     const files: StoredFile[] = [];
     try {
-      await fileStore.iterate<StoredFile, void>((value) => {
-        files.push(value);
+      await fileStore.iterate<any, void>((value) => {
+        let blob: Blob;
+        if (value.arrayBuffer) {
+          blob = new Blob([value.arrayBuffer], { type: value.type });
+        } else if (value.blob) {
+          blob = value.blob;
+        } else {
+          return;
+        }
+
+        files.push({
+          id: value.id,
+          name: value.name,
+          blob,
+          type: value.type,
+          uploadedAt: value.uploadedAt
+        });
       });
       // Ordenar por fecha de subida de más reciente a más antiguo
       return files.sort((a, b) => new Date(b.uploadedAt).getTime() - new Date(a.uploadedAt).getTime());
