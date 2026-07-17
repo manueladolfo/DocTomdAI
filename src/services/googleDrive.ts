@@ -25,7 +25,7 @@ export const authenticateGoogleDrive = (): Promise<string> => {
       return;
     }
 
-    const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID || localStorage.getItem('gdrive_client_id') || '';
+    const clientId = (import.meta.env.VITE_GOOGLE_CLIENT_ID || localStorage.getItem('gdrive_client_id') || '').trim();
     if (!clientId) {
       reject(new Error('CLIENT_ID de Google Drive no configurado en Ajustes.'));
       return;

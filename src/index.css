@@ -114,8 +114,20 @@
   from { transform: translate(-50%, -20px); opacity: 0; }
   to { transform: translate(-50%, 0); opacity: 1; }
 }
+
+@keyframes toast-slide-down-mobile {
+  from { transform: translateY(-20px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+
 .toast-entrance {
-  animation: toast-slide-down 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  animation: toast-slide-down-mobile 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@media (min-width: 640px) {
+  .toast-entrance {
+    animation: toast-slide-down 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  }
 }
 
 @keyframes modal-scale-in {

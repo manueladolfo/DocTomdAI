@@ -59,8 +59,8 @@ export default function App() {
   const [isConverting, setIsConverting] = useState(false);
   const [historyList, setHistoryList] = useState<Conversion[]>([]);
   const [filesList, setFilesList] = useState<StoredFile[]>([]);
-  const [geminiApiKey, setGeminiApiKey] = useState<string>(localStorage.getItem('gemini_api_key') || import.meta.env.VITE_GEMINI_API_KEY || '');
-  const [googleClientId, setGoogleClientId] = useState<string>(localStorage.getItem('gdrive_client_id') || import.meta.env.VITE_GOOGLE_CLIENT_ID || '');
+  const [geminiApiKey, setGeminiApiKey] = useState<string>((localStorage.getItem('gemini_api_key') || import.meta.env.VITE_GEMINI_API_KEY || '').trim());
+  const [googleClientId, setGoogleClientId] = useState<string>((localStorage.getItem('gdrive_client_id') || import.meta.env.VITE_GOOGLE_CLIENT_ID || '').trim());
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
   
@@ -285,8 +285,12 @@ export default function App() {
 
   // Guardar configuración de Ajustes
   const saveSettings = () => {
-    localStorage.setItem('gemini_api_key', geminiApiKey);
-    localStorage.setItem('gdrive_client_id', googleClientId);
+    const trimmedApiKey = geminiApiKey.trim();
+    const trimmedClientId = googleClientId.trim();
+    setGeminiApiKey(trimmedApiKey);
+    setGoogleClientId(trimmedClientId);
+    localStorage.setItem('gemini_api_key', trimmedApiKey);
+    localStorage.setItem('gdrive_client_id', trimmedClientId);
     setIsSettingsOpen(false);
     showToast('Ajustes guardados correctamente.', 'success');
   };
@@ -665,7 +669,7 @@ export default function App() {
     <div className="flex h-screen w-screen overflow-hidden bg-background text-on-surface">
       {/* Toast de error */}
       {errorMsg && (
-        <div className="fixed top-6 left-1/2 -translate-x-1/2 z-[100] w-[90vw] max-w-lg toast-entrance">
+        <div className="fixed top-16 left-4 right-4 sm:left-1/2 sm:-translate-x-1/2 sm:right-auto sm:w-[90vw] sm:max-w-lg z-[100] toast-entrance">
           <div className="bg-red-500/95 backdrop-blur-xl border border-white/10 px-4 py-3 rounded-xl shadow-2xl flex items-start gap-3 max-h-[85vh] overflow-y-auto">
             <AlertCircle className="text-white shrink-0 mt-0.5" size={20} />
             <div className="flex-1 min-w-0">
@@ -681,11 +685,11 @@ export default function App() {
 
       {/* Toast de éxito */}
       {successMsg && (
-        <div className="fixed top-6 left-1/2 -translate-x-1/2 z-[100] w-auto max-w-md toast-entrance">
+        <div className="fixed top-16 left-4 right-4 sm:left-1/2 sm:-translate-x-1/2 sm:right-auto sm:w-auto sm:max-w-md z-[100] toast-entrance">
           <div className="bg-green-500/90 backdrop-blur-xl border border-white/10 px-4 py-3 rounded-xl shadow-2xl flex items-center gap-3">
             <CheckCircle className="text-white shrink-0" size={20} />
             <p className="text-white text-sm font-medium">{successMsg}</p>
-            <button onClick={() => setSuccessMsg(null)} className="ml-2 hover:bg-white/10 p-1 rounded-lg transition-colors">
+            <button onClick={() => setSuccessMsg(null)} className="ml-2 hover:bg-white/10 p-1 rounded-lg transition-colors cursor-pointer">
               <span className="material-symbols-outlined text-[18px] text-white">close</span>
             </button>
           </div>
