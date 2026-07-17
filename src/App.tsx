@@ -1019,36 +1019,144 @@ export default function App() {
                   No hay conversiones guardadas en el historial local. Sube un archivo para comenzar.
                 </div>
               ) : (
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left border-collapse">
-                    <thead>
-                      <tr className="border-b border-outline-variant/20 text-[10px] uppercase tracking-wider font-label-caps text-outline">
-                        <th className="py-3 px-4 font-semibold">Documento</th>
-                        <th className="py-3 px-4 font-semibold">Fecha</th>
-                        <th className="py-3 px-4 font-semibold">Estado</th>
-                        <th className="py-3 px-4 font-semibold text-right">Acciones</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-outline-variant/10 text-sm">
-                      {historyList.map((item) => (
-                        <tr key={item.id} className="hover:bg-white/[0.02] transition-colors group">
-                          <td className="py-3.5 px-4 font-medium min-w-[200px]">
+                <>
+                  {/* Vista Desktop: Tabla (visible en pantallas md o superiores) */}
+                  <div className="hidden md:block overflow-x-auto">
+                    <table className="w-full text-left border-collapse">
+                      <thead>
+                        <tr className="border-b border-outline-variant/20 text-[10px] uppercase tracking-wider font-label-caps text-outline">
+                          <th className="py-3 px-4 font-semibold">Documento</th>
+                          <th className="py-3 px-4 font-semibold">Fecha</th>
+                          <th className="py-3 px-4 font-semibold">Estado</th>
+                          <th className="py-3 px-4 font-semibold text-right">Acciones</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-outline-variant/10 text-sm">
+                        {historyList.map((item) => (
+                          <tr key={item.id} className="hover:bg-white/[0.02] transition-colors group">
+                            <td className="py-3.5 px-4 font-medium min-w-[200px]">
+                              {item.status === 'error' ? (
+                                <div className="flex items-center gap-2">
+                                  <span className="text-red-400 font-semibold break-all">{item.nombre_archivo}</span>
+                                  <button 
+                                    onClick={() => showToast(item.errorMsg || 'Error en conversión', 'error')}
+                                    className="p-1 bg-red-500/10 hover:bg-red-500/20 border border-red-500/20 text-red-400 rounded transition-colors"
+                                    title="Ver mensaje de error"
+                                  >
+                                    <AlertCircle size={12} />
+                                  </button>
+                                </div>
+                              ) : (
+                                <span className="text-green-400 font-semibold break-all">{item.nombre_archivo}</span>
+                              )}
+                            </td>
+                            <td className="py-3.5 px-4 text-outline text-xs whitespace-nowrap">
+                              {new Date(item.fecha_conversion).toLocaleString('es-ES', { 
+                                day: '2-digit', 
+                                month: '2-digit', 
+                                year: 'numeric',
+                                hour: '2-digit',
+                                minute: '2-digit'
+                              })}
+                            </td>
+                            <td className="py-3.5 px-4 whitespace-nowrap">
+                              {item.status === 'error' ? (
+                                <span className="text-[10px] uppercase font-bold tracking-wider font-label-caps text-red-400 bg-red-500/10 border border-red-500/20 px-2 py-0.5 rounded-md">Fallo</span>
+                              ) : (
+                                <span className="text-[10px] uppercase font-bold tracking-wider font-label-caps text-green-400 bg-green-500/10 border border-green-500/20 px-2 py-0.5 rounded-md">Éxito</span>
+                              )}
+                            </td>
+                            <td className="py-3.5 px-4 text-right whitespace-nowrap">
+                              <div className="flex items-center justify-end gap-2.5">
+                                {/* Descarga original */}
+                                <button 
+                                  onClick={() => handleDownloadOriginal(item.id, item.nombre_archivo)}
+                                  className="p-1.5 hover:bg-white/10 rounded-lg text-outline hover:text-white transition-colors"
+                                  title="Descargar original"
+                                >
+                                  <Download size={14} />
+                                </button>
+
+                                {/* Visualizar original en Workspace */}
+                                <button 
+                                  onClick={() => handleViewOriginal(item.id)}
+                                  className="p-1.5 hover:bg-white/10 rounded-lg text-outline hover:text-white transition-colors"
+                                  title="Visualizar original"
+                                >
+                                  <Eye size={14} />
+                                </button>
+
+                                {/* Visualizar md (Caja flotante premium) */}
+                                {item.status !== 'error' && (
+                                  <button 
+                                    onClick={() => handleViewMarkdownModal(item.nombre_archivo, item.texto_md_resultado)}
+                                    className="p-1.5 hover:bg-white/10 rounded-lg text-outline hover:text-primary transition-colors"
+                                    title="Ver Markdown Convertido"
+                                  >
+                                    <Code size={14} />
+                                  </button>
+                                )}
+
+                                {/* Borrar */}
+                                <button 
+                                  onClick={async () => {
+                                    if (confirm('¿Seguro que deseas eliminar esta conversión del historial?')) {
+                                      await historyStorage.deleteConversion(item.id);
+                                      await fileStorage.deleteFile(item.id);
+                                      loadLocalData();
+                                    }
+                                  }}
+                                  className="p-1.5 hover:bg-white/10 rounded-lg text-outline hover:text-red-400 transition-colors"
+                                  title="Eliminar registro"
+                                >
+                                  <span className="material-symbols-outlined text-[15px]">delete</span>
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  {/* Vista Mobile: Tarjetas compactas (visible en pantallas móviles < md) */}
+                  <div className="block md:hidden space-y-4">
+                    {historyList.map((item) => (
+                      <div 
+                        key={item.id} 
+                        className="bg-white/[0.02] border border-outline-variant/10 rounded-2xl p-4 flex flex-col space-y-3"
+                      >
+                        {/* Fila superior: Nombre de archivo y Estado */}
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0 flex-1">
                             {item.status === 'error' ? (
-                              <div className="flex items-center gap-2">
-                                <span className="text-red-400 font-semibold break-all">{item.nombre_archivo}</span>
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <span className="text-red-400 font-semibold text-sm break-all">{item.nombre_archivo}</span>
                                 <button 
                                   onClick={() => showToast(item.errorMsg || 'Error en conversión', 'error')}
-                                  className="p-1 bg-red-500/10 hover:bg-red-500/20 border border-red-500/20 text-red-400 rounded transition-colors"
+                                  className="p-1 bg-red-500/10 hover:bg-red-500/20 border border-red-500/20 text-red-400 rounded transition-colors shrink-0 flex items-center justify-center"
                                   title="Ver mensaje de error"
                                 >
                                   <AlertCircle size={12} />
                                 </button>
                               </div>
                             ) : (
-                              <span className="text-green-400 font-semibold break-all">{item.nombre_archivo}</span>
+                              <span className="text-green-400 font-semibold text-sm break-all">{item.nombre_archivo}</span>
                             )}
-                          </td>
-                          <td className="py-3.5 px-4 text-outline text-xs whitespace-nowrap">
+                          </div>
+                          <div className="shrink-0 pt-0.5">
+                            {item.status === 'error' ? (
+                              <span className="text-[9px] uppercase font-bold tracking-wider font-label-caps text-red-400 bg-red-500/10 border border-red-500/20 px-1.5 py-0.5 rounded">Fallo</span>
+                            ) : (
+                              <span className="text-[9px] uppercase font-bold tracking-wider font-label-caps text-green-400 bg-green-500/10 border border-green-500/20 px-1.5 py-0.5 rounded">Éxito</span>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Fila intermedia: Fecha de conversión */}
+                        <div className="flex items-center justify-between text-[11px] text-outline">
+                          <span>Fecha</span>
+                          <span>
                             {new Date(item.fecha_conversion).toLocaleString('es-ES', { 
                               day: '2-digit', 
                               month: '2-digit', 
@@ -1056,66 +1164,59 @@ export default function App() {
                               hour: '2-digit',
                               minute: '2-digit'
                             })}
-                          </td>
-                          <td className="py-3.5 px-4 whitespace-nowrap">
-                            {item.status === 'error' ? (
-                              <span className="text-[10px] uppercase font-bold tracking-wider font-label-caps text-red-400 bg-red-500/10 border border-red-500/20 px-2 py-0.5 rounded-md">Fallo</span>
-                            ) : (
-                              <span className="text-[10px] uppercase font-bold tracking-wider font-label-caps text-green-400 bg-green-500/10 border border-green-500/20 px-2 py-0.5 rounded-md">Éxito</span>
-                            )}
-                          </td>
-                          <td className="py-3.5 px-4 text-right whitespace-nowrap">
-                            <div className="flex items-center justify-end gap-2.5">
-                              {/* Descarga original */}
-                              <button 
-                                onClick={() => handleDownloadOriginal(item.id, item.nombre_archivo)}
-                                className="p-1.5 hover:bg-white/10 rounded-lg text-outline hover:text-white transition-colors"
-                                title="Descargar original"
-                              >
-                                <Download size={14} />
-                              </button>
+                          </span>
+                        </div>
 
-                              {/* Visualizar original en Workspace */}
-                              <button 
-                                onClick={() => handleViewOriginal(item.id)}
-                                className="p-1.5 hover:bg-white/10 rounded-lg text-outline hover:text-white transition-colors"
-                                title="Visualizar original"
-                              >
-                                <Eye size={14} />
-                              </button>
+                        {/* Fila inferior: Botones de acciones */}
+                        <div className="flex items-center justify-end gap-2 pt-2 border-t border-outline-variant/10">
+                          {/* Descarga original */}
+                          <button 
+                            onClick={() => handleDownloadOriginal(item.id, item.nombre_archivo)}
+                            className="p-2 hover:bg-white/10 rounded-lg text-outline hover:text-white transition-colors flex items-center justify-center shrink-0"
+                            title="Descargar original"
+                          >
+                            <Download size={15} />
+                          </button>
 
-                              {/* Visualizar md (Caja flotante premium) */}
-                              {item.status !== 'error' && (
-                                <button 
-                                  onClick={() => handleViewMarkdownModal(item.nombre_archivo, item.texto_md_resultado)}
-                                  className="p-1.5 hover:bg-white/10 rounded-lg text-outline hover:text-primary transition-colors"
-                                  title="Ver Markdown Convertido"
-                                >
-                                  <Code size={14} />
-                                </button>
-                              )}
+                          {/* Visualizar original en Workspace */}
+                          <button 
+                            onClick={() => handleViewOriginal(item.id)}
+                            className="p-2 hover:bg-white/10 rounded-lg text-outline hover:text-white transition-colors flex items-center justify-center shrink-0"
+                            title="Visualizar original"
+                          >
+                            <Eye size={15} />
+                          </button>
 
-                              {/* Borrar */}
-                              <button 
-                                onClick={async () => {
-                                  if (confirm('¿Seguro que deseas eliminar esta conversión del historial?')) {
-                                    await historyStorage.deleteConversion(item.id);
-                                    await fileStorage.deleteFile(item.id);
-                                    loadLocalData();
-                                  }
-                                }}
-                                className="p-1.5 hover:bg-white/10 rounded-lg text-outline hover:text-red-400 transition-colors"
-                                title="Eliminar registro"
-                              >
-                                <span className="material-symbols-outlined text-[15px]">delete</span>
-                              </button>
-                            </div>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+                          {/* Visualizar md (Caja flotante premium) */}
+                          {item.status !== 'error' && (
+                            <button 
+                              onClick={() => handleViewMarkdownModal(item.nombre_archivo, item.texto_md_resultado)}
+                              className="p-2 hover:bg-white/10 rounded-lg text-outline hover:text-primary transition-colors flex items-center justify-center shrink-0"
+                              title="Ver Markdown Convertido"
+                            >
+                              <Code size={15} />
+                            </button>
+                          )}
+
+                          {/* Borrar */}
+                          <button 
+                            onClick={async () => {
+                              if (confirm('¿Seguro que deseas eliminar esta conversión del historial?')) {
+                                await historyStorage.deleteConversion(item.id);
+                                await fileStorage.deleteFile(item.id);
+                                loadLocalData();
+                              }
+                            }}
+                            className="p-2 hover:bg-white/10 rounded-lg text-outline hover:text-red-400 transition-colors flex items-center justify-center shrink-0"
+                            title="Eliminar registro"
+                          >
+                            <span className="material-symbols-outlined text-[16px]">delete</span>
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </>
               )}
             </div>
           </main>
