@@ -878,12 +878,7 @@ export default function App() {
               <button onClick={handleGoDashboard} className="p-1.5 hover:bg-white/10 rounded-lg transition-colors text-outline hover:text-white mr-1" title="Volver al Inicio">
                 <Home size={16} />
               </button>
-              {isMobile && (
-                <div className="w-8 h-8 rounded-lg overflow-hidden shrink-0 flex items-center justify-center bg-white/5 mr-1">
-                  <img src={logoSrc} alt="Logo" className="w-full h-full object-contain" />
-                </div>
-              )}
-              <FileText className="text-primary shrink-0 hidden sm:block" size={18} />
+              <FileText className="text-primary shrink-0" size={18} />
               <h2 className="text-body-md font-medium text-white truncate max-w-[180px] sm:max-w-md">
                 {viewState === 'import' && 'Importar Archivos'}
                 {viewState === 'workspace' && currentFile && currentFile.name}
