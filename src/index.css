@@ -193,3 +193,32 @@
     font-size: 16px !important;
   }
 }
+
+@keyframes float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-3px); }
+}
+
+@keyframes swing {
+  0%, 100% { transform: rotate(0deg); }
+  25% { transform: rotate(6deg); }
+  75% { transform: rotate(-6deg); }
+}
+
+@keyframes pulse-glowing {
+  0%, 100% { transform: scale(1); filter: drop-shadow(0 0 2px rgba(59, 130, 246, 0.2)); }
+  50% { transform: scale(1.04); filter: drop-shadow(0 0 6px rgba(59, 130, 246, 0.45)); }
+}
+
+.animate-float {
+  animation: float 3s ease-in-out infinite;
+}
+
+.animate-swing {
+  animation: swing 4s ease-in-out infinite;
+}
+
+.animate-pulse-glowing {
+  animation: pulse-glowing 2.2s ease-in-out infinite;
+}
+

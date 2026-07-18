@@ -931,72 +931,123 @@ export default function App() {
           <main className="flex-1 p-6 sm:p-10 overflow-y-auto bg-background flex flex-col justify-start space-y-8 pb-24 sm:pb-10 min-h-screen">
             {/* Cabecera del Dashboard */}
             <div className="space-y-2 mt-4 animate-fade-in">
-              <h3 className="text-2xl sm:text-3xl font-bold text-white tracking-tight">Bienvenido a DocToMarkdown</h3>
+              <div className="flex items-center justify-between gap-4">
+                <h3 className="text-2xl sm:text-3xl font-bold text-white tracking-tight">Bienvenido a DocToMarkdown</h3>
+                {isMobile && (
+                  <div className={`inline-flex items-center gap-1.5 text-[10px] font-semibold px-2.5 py-1 rounded-full border shrink-0 ${
+                    gdriveToken 
+                      ? 'bg-green-500/10 text-green-400 border-green-500/20 shadow-[0_0_8px_rgba(74,222,128,0.15)]' 
+                      : 'bg-white/5 text-outline border-outline-variant/20'
+                  }`}>
+                    <Cloud size={12} className={gdriveToken ? "animate-pulse text-green-400" : "text-outline"} />
+                    <span>{gdriveToken ? 'Backup Activo' : 'Sin Backup'}</span>
+                  </div>
+                )}
+              </div>
               <p className="text-on-surface-variant text-sm max-w-2xl">
                 Tu centro local de transcripción y maquetación de archivos. Convierte PDFs y capturas a Markdown de forma privada e instantánea.
               </p>
             </div>
 
             {/* Fila de Tarjetas de Estadísticas (Icono Nube Silueta) */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
-              {/* Card 1: Documentos Procesados */}
-              <div className="glass-panel p-6 rounded-2xl flex flex-col justify-between hover:border-primary/30 transition-all duration-300 group">
-                <div className="flex items-center justify-between text-outline mb-4">
-                  <span className="text-xs font-semibold uppercase tracking-wider font-label-caps">Procesados</span>
-                  <FileText className="text-primary group-hover:scale-110 transition-transform" size={18} />
+            {isMobile ? (
+              /* Vista Mobile: Stats bar estilo Revolut en una sola línea */
+              <div className="glass-panel p-4 rounded-2xl flex items-center justify-around gap-2 select-none animate-fade-in">
+                {/* Item 1: Procesados */}
+                <div className="flex flex-col items-center flex-1 min-w-0">
+                  <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center border border-primary/20 mb-1.5 animate-float">
+                    <FileText size={18} className="text-primary" />
+                  </div>
+                  <span className="text-base font-extrabold text-white leading-tight">{historyList.length}</span>
+                  <span className="text-[10px] text-on-surface-variant font-medium tracking-wide">Procesados</span>
                 </div>
-                <div>
-                  <h4 className="text-3xl sm:text-4xl font-extrabold text-white mb-1 animate-pulse-slow">
-                    {historyList.length}
-                  </h4>
-                  <p className="text-[11px] text-on-surface-variant">Archivos en base de datos local</p>
-                </div>
-              </div>
 
-              {/* Card 2: Tiempo Ahorrado */}
-              <div className="glass-panel p-6 rounded-2xl flex flex-col justify-between hover:border-primary/30 transition-all duration-300 group">
-                <div className="flex items-center justify-between text-outline mb-4">
-                  <span className="text-xs font-semibold uppercase tracking-wider font-label-caps">Tiempo Ahorrado</span>
-                  <Clock className="text-amber-400 group-hover:rotate-12 transition-transform" size={18} />
-                </div>
-                <div>
-                  <h4 className="text-3xl sm:text-4xl font-extrabold text-white mb-1">
-                    {(historyList.length * 2.5).toFixed(0)} min
-                  </h4>
-                  <p className="text-[11px] text-on-surface-variant">Estimado a 2.5 min por doc</p>
-                </div>
-              </div>
+                {/* Separador */}
+                <div className="w-px h-8 bg-outline-variant/20 shrink-0"></div>
 
-              {/* Card 3: Uso de Almacenamiento */}
-              <div className="glass-panel p-6 rounded-2xl flex flex-col justify-between hover:border-primary/30 transition-all duration-300 group">
-                <div className="flex items-center justify-between text-outline mb-4">
-                  <span className="text-xs font-semibold uppercase tracking-wider font-label-caps">Espacio Local</span>
-                  <HardDrive className="text-blue-400 group-hover:scale-110 transition-transform" size={18} />
+                {/* Item 2: Tiempo Ahorrado */}
+                <div className="flex flex-col items-center flex-1 min-w-0">
+                  <div className="w-10 h-10 rounded-full bg-amber-500/10 flex items-center justify-center border border-amber-500/20 mb-1.5 animate-swing">
+                    <Clock size={18} className="text-amber-400" />
+                  </div>
+                  <span className="text-base font-extrabold text-white leading-tight">{(historyList.length * 2.5).toFixed(0)}m</span>
+                  <span className="text-[10px] text-on-surface-variant font-medium tracking-wide">Ahorrado</span>
                 </div>
-                <div>
-                  <h4 className="text-3xl sm:text-4xl font-extrabold text-white mb-1">
-                    {calculateStorageSize()}
-                  </h4>
-                  <p className="text-[11px] text-on-surface-variant">Caché IndexedDB utilizada</p>
-                </div>
-              </div>
 
-              {/* Card 4: Sincronización en la Nube con Icono de Nube Silueta */}
-              <div className="glass-panel p-6 rounded-2xl flex flex-col justify-between hover:border-primary/30 transition-all duration-300 group min-w-0">
-                <div className="flex items-center justify-between text-outline mb-4">
-                  <span className="text-xs font-semibold uppercase tracking-wider font-label-caps">Cloud Backup</span>
-                  <Cloud size={18} className={gdriveToken ? "text-green-400 animate-pulse" : "text-outline"} />
-                </div>
-                <div className="min-w-0">
-                  <h4 className={`text-lg sm:text-xl font-bold mb-1 truncate ${gdriveToken ? 'text-green-400' : 'text-outline'}`}>
-                    {gdriveToken ? 'Sincronizado' : 'Desconectado'}
-                  </h4>
-                  <p className="text-[11px] text-on-surface-variant truncate">
-                    {gdriveToken ? 'Respaldo activo en Drive' : 'Vincular cuenta en Ajustes'}
-                  </p>
+                {/* Separador */}
+                <div className="w-px h-8 bg-outline-variant/20 shrink-0"></div>
+
+                {/* Item 3: Espacio Local */}
+                <div className="flex flex-col items-center flex-1 min-w-0">
+                  <div className="w-10 h-10 rounded-full bg-blue-500/10 flex items-center justify-center border border-blue-500/20 mb-1.5 animate-pulse-glowing">
+                    <HardDrive size={18} className="text-blue-400" />
+                  </div>
+                  <span className="text-base font-extrabold text-white leading-tight">{calculateStorageSize()}</span>
+                  <span className="text-[10px] text-on-surface-variant font-medium tracking-wide">Espacio</span>
                 </div>
               </div>
-            </div>
+            ) : (
+              /* Fila de Tarjetas de Estadísticas original para Desktop/Tablet */
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+                {/* Card 1: Documentos Procesados */}
+                <div className="glass-panel p-6 rounded-2xl flex flex-col justify-between hover:border-primary/30 transition-all duration-300 group">
+                  <div className="flex items-center justify-between text-outline mb-4">
+                    <span className="text-xs font-semibold uppercase tracking-wider font-label-caps">Procesados</span>
+                    <FileText className="text-primary group-hover:scale-110 transition-transform" size={18} />
+                  </div>
+                  <div>
+                    <h4 className="text-3xl sm:text-4xl font-extrabold text-white mb-1 animate-pulse-slow">
+                      {historyList.length}
+                    </h4>
+                    <p className="text-[11px] text-on-surface-variant">Archivos en base de datos local</p>
+                  </div>
+                </div>
+
+                {/* Card 2: Tiempo Ahorrado */}
+                <div className="glass-panel p-6 rounded-2xl flex flex-col justify-between hover:border-primary/30 transition-all duration-300 group">
+                  <div className="flex items-center justify-between text-outline mb-4">
+                    <span className="text-xs font-semibold uppercase tracking-wider font-label-caps">Tiempo Ahorrado</span>
+                    <Clock className="text-amber-400 group-hover:rotate-12 transition-transform" size={18} />
+                  </div>
+                  <div>
+                    <h4 className="text-3xl sm:text-4xl font-extrabold text-white mb-1">
+                      {(historyList.length * 2.5).toFixed(0)} min
+                    </h4>
+                    <p className="text-[11px] text-on-surface-variant">Estimado a 2.5 min por doc</p>
+                  </div>
+                </div>
+
+                {/* Card 3: Uso de Almacenamiento */}
+                <div className="glass-panel p-6 rounded-2xl flex flex-col justify-between hover:border-primary/30 transition-all duration-300 group">
+                  <div className="flex items-center justify-between text-outline mb-4">
+                    <span className="text-xs font-semibold uppercase tracking-wider font-label-caps">Espacio Local</span>
+                    <HardDrive className="text-blue-400 group-hover:scale-110 transition-transform" size={18} />
+                  </div>
+                  <div>
+                    <h4 className="text-3xl sm:text-4xl font-extrabold text-white mb-1">
+                      {calculateStorageSize()}
+                    </h4>
+                    <p className="text-[11px] text-on-surface-variant">Caché IndexedDB utilizada</p>
+                  </div>
+                </div>
+
+                {/* Card 4: Sincronización en la Nube con Icono de Nube Silueta */}
+                <div className="glass-panel p-6 rounded-2xl flex flex-col justify-between hover:border-primary/30 transition-all duration-300 group min-w-0">
+                  <div className="flex items-center justify-between text-outline mb-4">
+                    <span className="text-xs font-semibold uppercase tracking-wider font-label-caps">Cloud Backup</span>
+                    <Cloud size={18} className={gdriveToken ? "text-green-400 animate-pulse" : "text-outline"} />
+                  </div>
+                  <div className="min-w-0">
+                    <h4 className={`text-lg sm:text-xl font-bold mb-1 truncate ${gdriveToken ? 'text-green-400' : 'text-outline'}`}>
+                      {gdriveToken ? 'Sincronizado' : 'Desconectado'}
+                    </h4>
+                    <p className="text-[11px] text-on-surface-variant truncate">
+                      {gdriveToken ? 'Respaldo activo en Drive' : 'Vincular cuenta en Ajustes'}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
 
             {/* Contenedor del Historial Completo (Reemplazando módulos Bento anteriores) */}
             <div className="glass-panel rounded-3xl p-6 sm:p-8 flex flex-col space-y-6">
@@ -1653,7 +1704,7 @@ export default function App() {
               {historyList.length === 0 ? (
                 <p className="text-xs text-outline italic">No hay conversiones guardadas.</p>
               ) : (
-                historyList.slice(0, 5).map((item) => (
+                historyList.slice(0, 12).map((item) => (
                   <div 
                     key={item.id} 
                     onClick={() => {
